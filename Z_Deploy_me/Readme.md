@@ -17,6 +17,9 @@ docker image build -t py_routetracker:v1.0 -f ./Z_Deploy_me/Dockerfile .
 
 ## Use my Github Container Registry Image
 
+* I have used GH Actions to generate the package: <https://github.com/JAlcocerT/Py_RouteTracker/pkgs/container/py_routetracker>
+  * If you are doing this for the first time, remember to connect the package with your repository (and to make it public, if you want).
+
 
 ```yml
 version: '3.8'
