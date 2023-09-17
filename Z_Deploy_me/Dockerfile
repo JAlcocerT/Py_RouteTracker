@@ -14,11 +14,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install production dependencies.
-#RUN pip install -r ./Z_Deploy_me/requirements.txt
-RUN pip install -r requirements.txt
+RUN pip install -r ./Z_Deploy_me/requirements.txt
+#RUN pip install -r requirements.txt
 
 EXPOSE 8501
 
 #CMD python ./app/app.py
 
-ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+#ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
