@@ -14,7 +14,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install production dependencies.
-RUN pip install -r ./Z_Deploy_me/requirements.txt
+#RUN pip install -r ./Z_Deploy_me/requirements.txt
+RUN pip install -r requirements.txt
 
 EXPOSE 8501
 
