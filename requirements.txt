@@ -1,9 +1,10 @@
-streamlit==1.12.0
-altair==4.2.0
+streamlit==1.25.0
 
-pandas==1.2.4
-numpy==1.22.4
+pandas==2.0.3
+numpy==1.24.4
+
+folium==0.14.0 #pip show folium
+streamlit_folium=0.13.0
 
 plotly==5.11.0
-
-scipy==1.7.3
+gpx==1.5.0 #pip show gpxpy
