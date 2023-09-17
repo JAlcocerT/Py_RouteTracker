@@ -27,5 +27,9 @@ jobs:
       with:
         context: . #./Z_Deploy_me  #. # Specify the path to your Dockerfile and source code
         push: true
-        tags: ghcr.io/jalcocert/py_routetracker:v1.0
+        tags: |
+          ghcr.io/jalcocert/py_routetracker:v1.0
+          ghcr.io/jalcocert/py_routetracker:latest
+        
+        #tags: ghcr.io/jalcocert/py_routetracker:v1.0
         #tags: ghcr.io/jalcocert/py_routetracker:${{ github.sha }}

@@ -7,6 +7,9 @@ import plotly.express as px
 import plotly.graph_objects as go  # Import Plotly graph objects
 from io import BytesIO
 
+import base64
+
+
 # Create a Streamlit app
 st.title("Py Route Tracker")
 
@@ -21,6 +24,9 @@ hex_color = st.sidebar.color_picker("Select Route Color", "#35BD07")  # Default 
 # Initialize a global list to store coordinates and their respective file names
 all_coordinates = []
 file_names = []
+
+map_counter = 0
+
 
 # Create a Folium map
 m = folium.Map(
@@ -39,6 +45,7 @@ st.write("## These paths are waiting to be discovered:")
 
 # Define a function to load and display GPX routes on the map
 def PyLoadRoutes(uploaded_file, hex_color):
+    global map_counter
 
     st.sidebar.write(f"Loading the GPX file: {uploaded_file.name}")
 
@@ -83,6 +90,18 @@ def PyLoadRoutes(uploaded_file, hex_color):
 
     # Display the updated Folium map
     folium_static(m)
+    # Save the map
+    m.save("generated_map.html")
+    map_counter += 1  # Increment the counter for each file/map
+
+
+    # Add a button to offer the HTML file for download
+    # if st.button('Download the Last Generated Map'):
+    #     st.markdown(get_binary_file_downloader_html('generated_map.html', 'Map'), unsafe_allow_html=True)
+
+    # Add a button to offer the HTML file for download
+    if st.button(f'Download the Map: {map_counter}', key=f'download_map_{map_counter}'):
+        st.markdown(get_binary_file_downloader_html('generated_map.html', f'Map {map_counter}'), unsafe_allow_html=True)
 
     st.sidebar.write("GPX file processed and displayed on the map")
 
@@ -141,6 +160,14 @@ def haversine(lat1, lon1, lat2, lon2):
     distance = R * c
 
     return distance
+
+def get_binary_file_downloader_html(bin_file, file_label='File'):
+    with open(bin_file, 'rb') as f:
+        data = f.read()
+    bin_str = base64.b64encode(data).decode()
+    href = f'<a href="data:application/octet-stream;base64,{bin_str}" download="{bin_file}">Download {file_label}</a>'
+    return href
+
 
 # Process and display the uploaded GPX files
 for uploaded_file in uploaded_files:
