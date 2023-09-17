@@ -29,6 +29,6 @@ jobs:
     - name: Build and push Docker image
       uses: docker/build-push-action@v2
       with:
-        context: ./Z_Deploy_me  # Specify the path to your Dockerfile and source code
+        context: . #./Z_Deploy_me  # Specify the path to your Dockerfile and source code
         push: true
         tags: ghcr.io/jalcocert/py_routetracker:${{ github.sha }}
