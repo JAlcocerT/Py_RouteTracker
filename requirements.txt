@@ -1,0 +1,10 @@
+pandas==2.0.3
+numpy==1.24.4
+
+streamlit==1.25.0
+
+folium==0.14.0 #pip show folium
+streamlit_folium==0.13.0
+
+plotly==5.11.0
+gpxpy==1.5.0 #pip show gpxpy
