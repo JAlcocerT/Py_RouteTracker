@@ -1,6 +1,7 @@
 # Py_RouteTracker
 
 Analyzing location and routes data with Python.
+
 ## Repository Structure
 
 * Main Folder:
@@ -8,13 +9,14 @@ Analyzing location and routes data with Python.
     * Py_Route_to_HTML.ipynb - Visualize your GPX file data in **OpenStreetMap** with **Folium**, also export it.
     * Py_RouteTracker.ipynb 
     * Py_RoutePolar.ipynb
-
 * ./EDA:
     * My learning process
-* ./Data ./Data_My_Routes and ./Data_Polar
+* ./Data ./Data_My_Routes ./Data_Polar ./Data_Kart
     * Sample GPX files
     * Sample Polar Data
     * Sample GEOJSON files: in /HU-GR_geojson folder
+* ./ Data_PhyPhox
+    * Sample csv Data export from PhyPhox (Physical Phone Experiments)
 * ./Data_Maps:
     * Sample shp files: in /NUTS_RG_* folder
 
@@ -44,6 +46,7 @@ alt="Open In Colab"/>
 * [Folium](https://github.com/python-visualization/folium)
 * [GPXpy](https://github.com/tkrajina/gpxpy/tree/dev)
 * [Streamlit](https://github.com/streamlit/streamlit)
+* [PhyPhox](https://github.com/phyphox/phyphox-android)
 
 ### Recommended Resources
 
