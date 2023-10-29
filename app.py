@@ -11,6 +11,7 @@ import base64
 
 
 # Create a Streamlit app
+st.set_page_config(page_title='Route Tracker',page_icon':earth_americas:')
 st.title("Py Route Tracker")
 
 # Larger text with Markdown
