@@ -3,7 +3,6 @@
 * CSV with Data export from Polar - time, speed, distance
 
 
-
 ### Additional Info
 
 * Using Polar to capture Route information: <https://fossengineer.com/polar-data-python-analysis/>
