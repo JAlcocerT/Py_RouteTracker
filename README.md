@@ -1,24 +1,52 @@
-# Py_RouteTracker
+<div align="center">
+  <h1>Py_RouteTracker</h1>
+</div>
 
-Analyzing location and routes data with Python.
+<div align="center">
+  <h3>Analyzing location and routes data with Python.</h3>
+</div>
+
+<div align="center">
+  <a href="https://github.com/JAlcocerT/Py_RouteTracker?tab=GPL-3.0-1-ov-file" style="margin-right: 5px;">
+    <img alt="Code License" src="https://img.shields.io/badge/License-GPLv3-blue.svg" />
+  </a>
+  <a href="https://github.com/JAlcocerT/JAlcocerT/Py_RouteTracker/actions/workflows/CICD-GHA_MultiArch.yml.yml" style="margin-right: 5px;">
+    <img alt="GH Actions Workflow" src="https://github.com/JAlcocerT/Py_RouteTracker/actions/workflows/CICD-GHA_MultiArch.yml.yml/badge.svg" />
+  </a>
+  <a href="https://GitHub.com/JAlcocerT/Py_RouteTracker/graphs/commit-activity" style="margin-right: 5px;">
+    <img alt="Mantained" src="https://img.shields.io/badge/Maintained%3F-no-grey.svg" />
+  </a>
+  <a href="https://www.python.org/downloads/release/python-3819/">
+    <img alt="Python Version" src="https://img.shields.io/badge/python-3.10-blue.svg" />
+  </a>
+</div>
+
+
 
 ## Repository Structure
 
-* Main Folder:
-    * app.py - A streamlit app to interactively load and display your .GPX routes interactively
-    * Py_Route_to_HTML.ipynb - Visualize your GPX file data in **OpenStreetMap** with **Folium**, also export it.
-    * Py_RouteTracker.ipynb 
-    * Py_RoutePolar.ipynb
+
+<details>
+  <summary>Main Folder</summary>
+  &nbsp;
+
+* app.py - A streamlit app to interactively load and display your .GPX routes interactively
+* Py_Route_to_HTML.ipynb - Visualize your GPX file data in **OpenStreetMap** with **Folium**, also export it.
+* Py_RouteTracker.ipynb 
+* Py_RoutePolar.ipynb
+
+</details>
+
 * ./EDA:
     * My learning process
 * ./Data ./Data_My_Routes ./Data_Polar ./Data_Kart
     * Sample GPX files
     * Sample Polar Data
-    * Sample GEOJSON files: in /HU-GR_geojson folder
-* ./ Data_PhyPhox
-    * Sample csv Data export from PhyPhox (Physical Phone Experiments)
+    * Sample GEOJSON files: in `/HU-GR_geojson` folder
+* ./Data_PhyPhox
+    * Sample csv Data export from **PhyPhox** (Physical Phone Experiments)
 * ./Data_Maps:
-    * Sample shp files: in /NUTS_RG_* folder
+    * Sample shp files: in `/NUTS_RG_*`folder
 
 ## Try Me: it is F/OSS!
 
@@ -61,7 +89,11 @@ alt="Open In Colab"/>
 
 * Support extra evening code sessions:
 
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/FossEngineer)
+<div align="center">
+  <a href="https://ko-fi.com/Z8Z1QPGUM">
+    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi">
+  </a>
+</div>
 
 
 ## :scroll: License

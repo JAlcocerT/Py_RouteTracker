@@ -1,8 +1,13 @@
  # This workflow will install build and push the container of the Py_Route_Tracker app of this repository.
 
-name: CI/CD Pipeline
+name: CI/CD Pipeline X86
 
-on: [push]
+# on: [push]
+on:
+  # push:
+  #   branches:
+  #     - main
+  workflow_dispatch:
 
 jobs:
   build-and-push:
