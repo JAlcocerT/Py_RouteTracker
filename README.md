@@ -10,8 +10,8 @@
   <a href="https://github.com/JAlcocerT/Py_RouteTracker?tab=GPL-3.0-1-ov-file" style="margin-right: 5px;">
     <img alt="Code License" src="https://img.shields.io/badge/License-GPLv3-blue.svg" />
   </a>
-  <a href="https://github.com/JAlcocerT/Py_RouteTracker/actions/workflows/CICD-GHA_MultiArch.yml.yml" style="margin-right: 5px;">
-    <img alt="GH Actions Workflow" src="https://github.com/JAlcocerT/Py_RouteTracker/actions/workflows/CICD-GHA_MultiArch.yml.yml/badge.svg" />
+  <a href="https://github.com/JAlcocerT/Py_RouteTracker/actions/workflows/CICD-GHA_MultiArch.yml" style="margin-right: 5px;">
+    <img alt="GH Actions Workflow" src="https://github.com/JAlcocerT/Py_RouteTracker/actions/workflows/CICD-GHA_MultiArch.yml/badge.svg" />
   </a>
   <a href="https://GitHub.com/JAlcocerT/Py_RouteTracker/graphs/commit-activity" style="margin-right: 5px;">
     <img alt="Mantained" src="https://img.shields.io/badge/Maintained%3F-no-grey.svg" />
