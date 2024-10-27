@@ -10,7 +10,7 @@
   <a href="https://github.com/JAlcocerT/Py_RouteTracker?tab=GPL-3.0-1-ov-file" style="margin-right: 5px;">
     <img alt="Code License" src="https://img.shields.io/badge/License-GPLv3-blue.svg" />
   </a>
-  <a href="https://github.com/JAlcocerT/JAlcocerT/Py_RouteTracker/actions/workflows/CICD-GHA_MultiArch.yml.yml" style="margin-right: 5px;">
+  <a href="https://github.com/JAlcocerT/Py_RouteTracker/actions/workflows/CICD-GHA_MultiArch.yml.yml" style="margin-right: 5px;">
     <img alt="GH Actions Workflow" src="https://github.com/JAlcocerT/Py_RouteTracker/actions/workflows/CICD-GHA_MultiArch.yml.yml/badge.svg" />
   </a>
   <a href="https://GitHub.com/JAlcocerT/Py_RouteTracker/graphs/commit-activity" style="margin-right: 5px;">
@@ -57,13 +57,11 @@
         * Learn [how to setup Github CI/CD](https://fossengineer.com/docker-github-actions-cicd/#github-workflows)
 * You can use any of the notebooks, like Py_Route_to_HTML, directly from Google Colaboratory:
 
-<a 
- href="https://colab.research.google.com/github/JAlcocerT/Py_RouteTracker/blob/main/Py_Route_to_HTML.ipynb"
- target="_parent">
-<img 
- src="https://colab.research.google.com/assets/colab-badge.svg"
-alt="Open In Colab"/>
-</a>
+<div style="text-align: center;">
+  <a href="https://colab.research.google.com/github/JAlcocerT/Py_RouteTracker/blob/main/Py_Route_to_HTML.ipynb" target="_parent">
+    <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
+  </a>
+</div>
 
 * Analyze your sport performance using the Py_Route_Polar.ipynb
     * Wrote about this in my Tech Blog: <https://fossengineer.com/polar-data-python-analysis/>
@@ -77,6 +75,8 @@ alt="Open In Colab"/>
 * [PhyPhox](https://github.com/phyphox/phyphox-android)
 
 ### Recommended Resources
+
+These 2 projects are fantastic to work with:
 
 * <https://www.openstreetmap.org/>
 * <https://github.com/thedirtyfew/dash-leaflet>
