@@ -10,8 +10,8 @@
   <a href="https://github.com/JAlcocerT/Py_RouteTracker?tab=GPL-3.0-1-ov-file" style="margin-right: 5px;">
     <img alt="Code License" src="https://img.shields.io/badge/License-GPLv3-blue.svg" />
   </a>
-  <a href="https://github.com/JAlcocerT/Py_RouteTracker/actions/workflows/CICD-GHA_MultiArch.yml" style="margin-right: 5px;">
-    <img alt="GH Actions Workflow" src="https://github.com/JAlcocerT/Py_RouteTracker/actions/workflows/CICD-GHA_MultiArch.yml/badge.svg" />
+  <a href="https://github.com/JAlcocerT/Py_RouteTracker/actions/workflows/ci-cd.yml" style="margin-right: 5px;">
+    <img alt="GH Actions Workflow" src="https://github.com/JAlcocerT/Py_RouteTracker/actions/workflows/ci-cd.yml/badge.svg" />
   </a>
   <a href="https://GitHub.com/JAlcocerT/Py_RouteTracker/graphs/commit-activity" style="margin-right: 5px;">
     <img alt="Mantained" src="https://img.shields.io/badge/Maintained%3F-no-grey.svg" />
@@ -22,7 +22,6 @@
 </div>
 
 
-
 ## Repository Structure
 
 
@@ -30,22 +29,22 @@
   <summary>Main Folder</summary>
   &nbsp;
 
-* app.py - A streamlit app to interactively load and display your .GPX routes interactively
-* Py_Route_to_HTML.ipynb - Visualize your GPX file data in **OpenStreetMap** with **Folium**, also export it.
-* Py_RouteTracker.ipynb 
-* Py_RoutePolar.ipynb
+* `app.py` - A streamlit app to interactively load and display your .GPX routes interactively
+* `Py_Route_to_HTML.ipynb` - Visualize your GPX file data in **OpenStreetMap** with **Folium**, also export it.
+* `Py_RouteTracker.ipynb` 
+* `Py_RoutePolar.ipynb` - Analyze Polar Data with Python
 
 </details>
 
-* ./EDA:
+* `./EDA`:
     * My learning process
-* ./Data ./Data_My_Routes ./Data_Polar ./Data_Kart
+* `./Data` .`/Data_My_Routes` `./Data_Polar` `./Data_Kart`
     * Sample GPX files
     * Sample Polar Data
     * Sample GEOJSON files: in `/HU-GR_geojson` folder
-* ./Data_PhyPhox
+* `./Data_PhyPhox`
     * Sample csv Data export from **PhyPhox** (Physical Phone Experiments)
-* ./Data_Maps:
+* `./Data_Maps`:
     * Sample shp files: in `/NUTS_RG_*`folder
 
 ## Try Me: it is F/OSS!
@@ -53,8 +52,8 @@
 * Deploy me using Docker: 
     * [Why Docker?](https://fossengineer.com/docker-first-steps-guide-for-data-analytics/)
     * This Repository has automatic CI/CD with Github Actions
-        * The magic happens at /.github/workflows/ci-cd.yml
-        * Learn [how to setup Github CI/CD](https://fossengineer.com/docker-github-actions-cicd/#github-workflows)
+        * The magic happens at `./github/workflows/ci-cd.yml`
+        * Learn [how to setup Github CI/CD](https://jalcocert.github.io/JAlcocerT/github-actions-use-cases)
 * You can use any of the notebooks, like Py_Route_to_HTML, directly from Google Colaboratory:
 
 <div style="text-align: center;">
@@ -63,8 +62,8 @@
   </a>
 </div>
 
-* Analyze your sport performance using the Py_Route_Polar.ipynb
-    * Wrote about this in my Tech Blog: <https://fossengineer.com/polar-data-python-analysis/>
+* Analyze your sport performance using the `Py_Route_Polar.ipynb`
+    * Wrote about this in my Tech Blog: <https://jalcocert.github.io/JAlcocerT/polar-data-python-analysis//>
 
 ## Powered Thanks To :heart:
 
