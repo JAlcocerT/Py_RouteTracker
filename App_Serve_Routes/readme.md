@@ -1,4 +1,4 @@
-* Joined gpx first, then use here.
+* Joined gpx first, then use here:
 
 ```sh
 python3 -m http.server 8080

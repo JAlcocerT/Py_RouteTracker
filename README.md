@@ -22,7 +22,7 @@
 </div>
 
 
-## Repository Structure
+## What can Py_RouteTracker do?
 
 
 <details>
@@ -34,8 +34,6 @@
 * `Py_RouteTracker.ipynb` 
 * `Py_RoutePolar.ipynb` - Analyze Polar Data with Python
 
-</details>
-
 * `./EDA`:
     * My learning process
 * `./Data` .`/Data_My_Routes` `./Data_Polar` `./Data_Kart`
@@ -46,6 +44,14 @@
     * Sample csv Data export from **PhyPhox** (Physical Phone Experiments)
 * `./Data_Maps`:
     * Sample shp files: in `/NUTS_RG_*`folder
+
+</details>
+
+1. PhyPhox Data Extraction
+2. Polar Data Extraction
+3. GoPro MetaData Extraction
+4. Combined for Bike/Karting tracking
+
 
 ## Try Me: it is F/OSS!
 
@@ -75,7 +81,7 @@
 
 ### Recommended Resources
 
-These 2 projects are fantastic to work with:
+These **2 projects** are fantastic to work with:
 
 * <https://www.openstreetmap.org/>
 * <https://github.com/thedirtyfew/dash-leaflet>

@@ -29,26 +29,3 @@ with open(output_file, 'w') as json_file:
     json.dump(data, json_file, indent=4)
 
 print(f"Results saved to {output_file}")
-
-
-
-# import re
-
-# # Path to the output.txt file
-# file_path = 'output.txt'
-
-# # Regular expression to capture "Time Stamp" values
-# timestamp_pattern = r'Time Stamp\s+:\s+([\d.]+)'
-
-# # Read the file and extract "Time Stamp" values
-# timestamps = []
-# with open(file_path, 'r') as file:
-#     for line in file:
-#         match = re.search(timestamp_pattern, line)
-#         if match:
-#             timestamps.append(float(match.group(1)))
-
-# # Print the extracted Time Stamp values
-# print("Extracted Time Stamps:")
-# for ts in timestamps:
-#     print(ts)
