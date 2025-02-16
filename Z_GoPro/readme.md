@@ -1,6 +1,6 @@
 Extracting **gopro metadata**.
 
-
+> Extended [blog post](https://jalcocert.github.io/JAlcocerT/dji-oa5pro-firmware-updates/#extracting-telemetry-data-from-gph9)
 
 * https://medium.com/@jrballesteros/a-simple-guide-to-extract-gps-information-from-gopro-photos-and-videos-cf6edf6dc601
     * https://github.com/exiftool/exiftool/blob/master/fmt_files/gpx.fmt
@@ -27,11 +27,11 @@ source gopro_venv/bin/activate #(linux)
 Install them with:
 
 ```sh
-pip install beautifulsoup4 openpyxl pandas numpy==2.0.0
+#pip install beautifulsoup4 openpyxl pandas numpy==2.0.0
 pip install -r requirements.txt #all at once
 #pip freeze | grep langchain
 
-pip show beautifulsoup4
+#pip show beautifulsoup4
 pip list
 #pip freeze > requirements.txt #generate a txt with the ones you have!
 ```
