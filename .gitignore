@@ -1,5 +1,8 @@
 *_venv/
 
+gpx_route_map.html
+komobi_sample_data.gpx
+
 /Data_GoPro/GH020009.MPG
 
 output_map_saved.html
