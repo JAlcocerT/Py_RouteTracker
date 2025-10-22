@@ -28,6 +28,13 @@ python3 Z_GoPro/extract_accel.py -i '/home/jalcocert/Desktop/Py_RouteTracker/Z_G
 
 uv run  Z_GoPro/plot_accl.py Z_GoPro/GX011033_accel.csv --show
 uv run  Z_GoPro/plot_gyro.py  Z_GoPro/GX011033_gyro.csv --show
+
+uv run Z_GoPro/integrate_accl_to_speed.py Z_GoPro/GX011033_accel.csv --show
+uv run Z_GoPro/integrate_accl_to_speed.py Z_GoPro/GX011033_accel.csv -o Z_GoPro/GX011033_speed.csv --show
+uv run  Z_GoPro/plot_accl.py Z_GoPro/GX011033_speed.csv --show
+
+uv run Z_GoPro/plot_accl.py Z_GoPro/GX011033_accel.csv --axis ay az --show
+uv run  Z_GoPro/plot_accl.py Z_GoPro/GX011033_speed.csv --axis vy vz --show
 ```
 
 ---
