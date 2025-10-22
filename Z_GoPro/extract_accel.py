@@ -47,10 +47,43 @@ def extract_accl_to_csv(input_mp4: str, output_csv: str) -> None:
     print(f"Wrote accelerometer CSV: {output_csv}")
 
 
+def extract_gyro_to_csv(input_mp4: str, output_csv: str) -> None:
+    extractor = GoProTelemetryExtractor(input_mp4)
+    extractor.open_source()
+    try:
+        gyro, gyro_t = extractor.extract_data("GYRO")
+    finally:
+        extractor.close_source()
+
+    if gyro is None or gyro_t is None:
+        raise RuntimeError("No GYRO data found in the file.")
+
+    if len(gyro) != len(gyro_t):
+        raise RuntimeError(f"Mismatched lengths: GYRO={len(gyro)} timestamps={len(gyro_t)}")
+
+    os.makedirs(os.path.dirname(output_csv), exist_ok=True)
+
+    with open(output_csv, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["t_s", "gx", "gy", "gz"])  # time in seconds, angular velocity units as provided by parser
+        for t, vec in zip(gyro_t, gyro):
+            if isinstance(vec, (list, tuple)) and len(vec) >= 3:
+                gx, gy, gz = vec[0], vec[1], vec[2]
+            else:
+                try:
+                    gx, gy, gz = vec
+                except Exception:
+                    raise RuntimeError("Unexpected GYRO vector format; expected length-3 values per sample.")
+            writer.writerow([t, gx, gy, gz])
+
+    print(f"Wrote gyroscope CSV: {output_csv}")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Extract GoPro accelerometer (ACCL) to CSV")
+    parser = argparse.ArgumentParser(description="Extract GoPro accelerometer (ACCL) and gyroscope (GYRO) to CSV files")
     parser.add_argument("-i", "--input", required=True, help="Path to GoPro MP4/MOV file")
-    parser.add_argument("-o", "--output", help="Output CSV path (default: script_dir/<video_stem>_accel.csv)")
+    parser.add_argument("-o", "--output", help="Accelerometer CSV path (default: script_dir/<video_stem>_accel.csv)")
+    parser.add_argument("--gyro-output", help="Gyroscope CSV path (default: script_dir/<video_stem>_gyro.csv)")
     args = parser.parse_args()
 
     input_mp4 = os.path.abspath(args.input)
@@ -60,11 +93,14 @@ def main():
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     video_stem = os.path.splitext(os.path.basename(input_mp4))[0]
-    default_out = os.path.join(script_dir, f"{video_stem}_accel.csv")
-    output_csv = os.path.abspath(args.output) if args.output else default_out
+    default_accel_out = os.path.join(script_dir, f"{video_stem}_accel.csv")
+    default_gyro_out = os.path.join(script_dir, f"{video_stem}_gyro.csv")
+    accel_csv = os.path.abspath(args.output) if args.output else default_accel_out
+    gyro_csv = os.path.abspath(args.gyro_output) if args.gyro_output else default_gyro_out
 
     try:
-        extract_accl_to_csv(input_mp4, output_csv)
+        extract_accl_to_csv(input_mp4, accel_csv)
+        extract_gyro_to_csv(input_mp4, gyro_csv)
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(2)
