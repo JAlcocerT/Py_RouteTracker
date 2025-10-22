@@ -5,11 +5,22 @@ Extracting **gopro metadata**.
 * https://medium.com/@jrballesteros/a-simple-guide-to-extract-gps-information-from-gopro-photos-and-videos-cf6edf6dc601
     * https://github.com/exiftool/exiftool/blob/master/fmt_files/gpx.fmt
 
+1. Install exiftool and extract:
+
 ```sh
 sudo apt-get install libimage-exiftool-perl #install exif
 #exiftool -ee ./GX030390.MP4 #you will see it on CLI
-exiftool -ee ./GX030390.MP4 > output-GX030390.txt #saves it
+exiftool -ee ./GX030390.MP4 > output-GX030390.txt #saves the GoPro metadata
+
+#for the accelerometer data
+#python3 Z_GoPro/extract_accel.py -i '/path/to/your.mp4'
+python3 Z_GoPro/extract_accel.py -i '/home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX011033.MP4' -o '/home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX011033_accel.csv'
+# exiftool -ee -G3 -json -f -s3 -n -struct -api largefiles=1 ./GX011033.MP4 > output-GX011033.json
+# exiftool -ee -G3 -csv -r -f -s3 -n -Extra 'Accelerometer*' ./GX011033.MP4 > telemetry_data.csv
+
 ```
+
+2. See the `*.ipynb` files for the analysis.
 
 ---
 
