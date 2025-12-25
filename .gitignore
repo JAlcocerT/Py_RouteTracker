@@ -1,3 +1,5 @@
+*.MP4
+
 *_venv/
 
 gpx_route_map.html
