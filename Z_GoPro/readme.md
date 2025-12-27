@@ -5,7 +5,8 @@ Extracting **gopro metadata**.
 * https://medium.com/@jrballesteros/a-simple-guide-to-extract-gps-information-from-gopro-photos-and-videos-cf6edf6dc601
     * https://github.com/exiftool/exiftool/blob/master/fmt_files/gpx.fmt
 
-1. Install exiftool and extract:
+
+1. Install **exiftool** and extract:
 
 ```sh
 sudo apt-get install libimage-exiftool-perl #install exif
