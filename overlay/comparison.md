@@ -133,10 +133,14 @@ ffmpeg -i original.mp4 -i overlay.mov -filter_complex "overlay=10:10" final.mp4
 
 ### Premium Racing HUD (Speed Arc + Map)
 
-I've created an even cooler version in `racing_hud.py`. To run it:
+I've created an even cooler version in `racing_hud.py`. 
+
+To run it:
 
 ```sh
-python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud.py
+#python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud.py
+#python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v2.py
+python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v2b.py
 ```
 
 To overlay it (it is wider, so we put it at the bottom):
@@ -148,4 +152,21 @@ ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
        -codec:a copy \
        -preset superfast \
        racing_output.mp4
+
+
+ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
+       -i /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v2.mp4 \
+       -filter_complex "[1:v]format=rgba,colorkey=0x000000:0.1:0.1[ckout];[0:v][ckout]overlay=(W-w)/2:H-h-50" \
+       -codec:a copy \
+       -preset superfast \
+       racing_v2_output.mp4
+
+ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
+       -i /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v2b.mp4 \
+       -filter_complex "[1:v]format=rgba,colorkey=0x000000:0.1:0.1[ckout];[0:v][ckout]overlay=(W-w)/2:H-h-50" \
+       -codec:a copy \
+       -preset superfast \
+       racing_v2b_output.mp4
 ```
+
+https://youtu.be/jqzzkexAx2I
