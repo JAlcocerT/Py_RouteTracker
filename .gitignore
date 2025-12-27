@@ -1,6 +1,8 @@
 *.MP4
 *.mp4
 
+*.pyc
+
 *_venv/
 
 gpx_route_map.html

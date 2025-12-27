@@ -139,8 +139,9 @@ To run it:
 
 ```sh
 #python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud.py
-#python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v2.py
-python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v2b.py
+python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v2.py
+#python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v2b.py
+python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3.py
 ```
 
 To overlay it (it is wider, so we put it at the bottom):
@@ -170,3 +171,23 @@ ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
 ```
 
 https://youtu.be/jqzzkexAx2I
+
+
+
+```sh
+#python -m venv venv
+#venv/bin/pip install gopro-overlay
+uv init
+uv add gopro-overlay  #https://github.com/time4tea/gopro-dashboard-overlay/tree/main
+#pacman -S ttf-roboto
+apt install truetype-roboto
+apt install fonts-roboto
+```
+
+```sh
+#venv/bin/gopro-dashboard.py --gpx ~/Downloads/Morning_Ride.gpx --privacy 52.000,-0.40000,0.50 ~/gopro/GH020073.MP4 GH020073-dashboard.MP4
+
+# Example with uv
+
+uv run gopro-dashboard.py /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410-dashboard.MP4
+```
