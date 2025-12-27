@@ -106,8 +106,6 @@ def render_racing_hud_v2b(df):
 
     # C. Detailed Speed Graph (Centered Line & Tracker)
     ax_graph.set_title("SPEED TELEMETRY", color='white', fontsize=10, loc='center', pad=10)
-    # Full profile as reference
-    ax_graph.plot(df['time'], df['speed_kmh'], color='cyan', alpha=0.05, lw=1)
     # Highlighted line up to current frame
     graph_line, = ax_graph.plot([], [], color='#00ff9f', lw=2, alpha=1.0)
     # The moving "red ball"
