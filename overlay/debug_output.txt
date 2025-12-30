@@ -1,0 +1,23 @@
+Scanning /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/output-kart25dec-2b.txt for speeds < 15 km/h...
+Time: 29.03s | Speed: 12.5 km/h
+Time: 29.03s | Speed: 9.6 km/h
+Time: 29.03s | Speed: 7.7 km/h
+Time: 29.03s | Speed: 7.4 km/h
+Time: 29.03s | Speed: 7.2 km/h
+Time: 29.03s | Speed: 5.4 km/h
+Time: 29.03s | Speed: 4.9 km/h
+Time: 29.03s | Speed: 3.9 km/h
+Time: 29.03s | Speed: 3.6 km/h
+Time: 29.03s | Speed: 2.4 km/h
+Time: 29.03s | Speed: 1.7 km/h
+Time: 29.03s | Speed: 1.8 km/h
+Time: 29.03s | Speed: 3.6 km/h
+Time: 29.03s | Speed: 5.7 km/h
+Time: 29.03s | Speed: 7.9 km/h
+Time: 29.03s | Speed: 9.4 km/h
+Time: 29.03s | Speed: 10.6 km/h
+Time: 29.03s | Speed: 10.9 km/h
+Time: 29.03s | Speed: 12.0 km/h
+Time: 29.03s | Speed: 13.0 km/h
+Time: 29.03s | Speed: 13.3 km/h
+Time: 29.03s | Speed: 13.9 km/h

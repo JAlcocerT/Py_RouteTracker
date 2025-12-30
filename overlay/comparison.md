@@ -143,7 +143,9 @@ python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v2.py
 #python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v2b.py
 python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3.py
 
+
 python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3a.py
+python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3b.py
 ```
 
 To overlay it (it is wider, so we put it at the bottom):
@@ -174,18 +176,22 @@ ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
 
 #bottom right
 #time python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3a.py
+time python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3b.py
+
 ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
-       -i /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3a.mp4 \
+       -i /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3b.mp4 \
        -filter_complex "[1:v]format=rgba,colorkey=0x000000:0.1:0.1[ckout];[0:v][ckout]overlay=W-w-50:H-h-50" \
        -codec:a copy \
        -preset superfast \
-       racing_v3a_output.mp4
+       racing_v3b_output.mp4
        #-filter_complex "[1:v]format=rgba,colorkey=0x000000:0.1:0.1[ckout];[0:v][ckout]overlay=(W-w)/2:H-h-50" \
 
 # SUCCESS! Comparative HUD created in /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3a.mp4
 # real    14m17,178s
 # user    20m34,059s
 # sys     23m46,717s
+
+#correcting sample time missmatch
 ```
 
 Tinkered with this at this post: *and with some videos*
