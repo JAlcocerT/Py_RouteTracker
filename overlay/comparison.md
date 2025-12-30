@@ -233,3 +233,9 @@ apt install fonts-roboto
 
 uv run gopro-dashboard.py /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410-dashboard.MP4
 ```
+
+
+```sh
+#python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/circuit_mapper_v2.py
+python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/circuit_mapper_v3.py
+```
