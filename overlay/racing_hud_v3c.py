@@ -85,8 +85,14 @@ def render_racing_hud_v3c(df_data):
     ax_map = fig.add_subplot(gs[0, 1])
     ax_graph = fig.add_subplot(gs[0, 2:])
     
-    fig.patch.set_alpha(0.0)
-    for ax in [ax_speed, ax_map, ax_graph]: ax.patch.set_alpha(0.0)
+    
+    # FORCE BLACK BACKGROUND for FFmpeg colorkey
+    # MP4 doesn't support alpha, so we must paint the background 
+    # Pure Black (#000000) so the video editor can key it out.
+    fig.patch.set_facecolor('black') 
+    for ax in [ax_speed, ax_map, ax_graph]: 
+        ax.set_facecolor('black')
+        
     ax_speed.axis('off'); ax_map.axis('off')
 
     # OUTLINE EFFECT FOR TEXT

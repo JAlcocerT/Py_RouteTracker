@@ -199,7 +199,8 @@ python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3c.py
 # Uses Black Text Outlines instead of Background Panels
 # Fixes "Squared" map distortion
 time python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3c.py
-
+#https://youtu.be/pAhEI2xUxcM
+#https://youtu.be/VJxFuVhYAWQ
 ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
        -i /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3c.mp4 \
        -filter_complex "[1:v]format=rgba,colorkey=0x000000:0.1:0.1[ckout];[0:v][ckout]overlay=W-w-50:H-h-50" \
