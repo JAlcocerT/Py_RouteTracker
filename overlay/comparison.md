@@ -174,9 +174,11 @@ ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
        -preset superfast \
        racing_v2b_output.mp4
 
+
 #bottom right
 #time python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3a.py
-time python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3b.py
+#correcting sample time missmatch
+time python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3b.py #https://youtu.be/w2wwC7j882k
 
 ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
        -i /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3b.mp4 \
@@ -191,13 +193,25 @@ ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
 # user    20m34,059s
 # sys     23m46,717s
 
-#correcting sample time missmatch
+python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3c.py
+
+# For V3c (Refined Style + Fixed Map)
+# Uses Black Text Outlines instead of Background Panels
+# Fixes "Squared" map distortion
+time python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3c.py
+
+ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
+       -i /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v3c.mp4 \
+       -filter_complex "[1:v]format=rgba,colorkey=0x000000:0.1:0.1[ckout];[0:v][ckout]overlay=W-w-50:H-h-50" \
+       -codec:a copy \
+       -preset superfast \
+       racing_v3c_output.mp4
 ```
 
 Tinkered with this at this post: *and with some videos*
 
 
-* From: https://youtu.be/jqzzkexAx2I
+* From: https://youtu.be/jqzzkexAx2I and https://youtu.be/w2wwC7j882k
 * To:....
 
 
