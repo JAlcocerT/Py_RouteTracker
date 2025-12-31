@@ -5,13 +5,11 @@ import re
 import os
 
 # --- CONIFGURATION ---
-FILE_PATH = "/home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/output-kart25dec-1b.txt"
+FILE_PATH = "/home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/output-kart25dec-1c.txt"
 OUTPUT_DIR = "/home/jalcocert/Desktop/Py_RouteTracker/overlay"
 VIDEO_DURATION_SEC = 532.5
 
 # START LINE CONFIGURATION
-# Instead of strict coords, we define WHERE the lap starts by TIME.
-# e.g. "I crossed the line at 00:13 in the video"
 LAP_START_TIME_SEC = 13.0 
 
 LAP_DETECTION_RADIUS_M = 15.0
@@ -80,8 +78,6 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 def get_coordinates_at_time(df, target_time):
-    """Finds the lat/lon closest to the given timestamp."""
-    # Find index where time is closest to target_time
     idx = (df['time'] - target_time).abs().idxmin()
     row = df.iloc[idx]
     return row['lat'], row['lon'], row['time']
@@ -89,15 +85,7 @@ def get_coordinates_at_time(df, target_time):
 def detect_laps(df, start_lat, start_lon):
     laps = []
     distances = []
-    lap_start_time = df.iloc[0]['time'] # Default catch
-    
-    # We start counting laps AFTER the first crossing if we define Start Line mid-lap?
-    # Actually, standard logic: 
-    # 1. We start the timer when we cross the start line the FIRST time?
-    #    OR does the video start AT the "Lap Start"?
-    # The user set LAP_START_TIME_SEC = 13.0.
-    # This implies the first crossing is AT 13.0.
-    # So Lap 1 effectively starts at 13.0.
+    lap_start_time = df.iloc[0]['time'] 
     
     lap_indices = []
     last_crossing_time = -MIN_LAP_TIME_SEC
@@ -113,7 +101,6 @@ def detect_laps(df, start_lat, start_lon):
         distances.append(dist)
         current_time = row['time']
         
-        # Debounce: Only look for crossings if enough time passed since last one
         if (current_time - last_crossing_time) > MIN_LAP_TIME_SEC:
             if dist < LAP_DETECTION_RADIUS_M:
                 if not in_zone:
@@ -126,21 +113,13 @@ def detect_laps(df, start_lat, start_lon):
                         best_idx_in_zone = i
             else:
                 if in_zone:
-                    # Exited zone -> Register Lap
                     in_zone = False
                     lap_indices.append(best_idx_in_zone)
                     last_crossing_time = df.iloc[best_idx_in_zone]['time']
                     print(f"Crossing detected at {last_crossing_time:.1f}s")
 
-    # Build Lap Table
     lap_table = []
-    # If the user defines the start line at t=13.0, that is effectively the START of Lap 1?
-    # Or is Lap 1 the "Out Lap"?
-    # The first detected crossing will be very close to LAP_START_TIME_SEC (e.g. 13.0s).
-    # Subsequent crossings define closed laps.
-    
-    if not lap_indices:
-        return pd.DataFrame(), [], []
+    if not lap_indices: return pd.DataFrame(), [], []
 
     for k in range(1, len(lap_indices)):
         start_idx = lap_indices[k-1]
@@ -165,55 +144,73 @@ def detect_laps(df, start_lat, start_lon):
 if __name__ == "__main__":
     print(f"Loading {FILE_PATH}...")
     df = parse_telemetry(FILE_PATH)
-    if df.empty: 
-        print("Error: No data.")
-        exit(1)
+    if df.empty: exit(1)
     
-    # 1. Determine Start Coordinates from Time
     s_lat, s_lon, actual_time = get_coordinates_at_time(df, LAP_START_TIME_SEC)
-    print(f"\n--- START LINE SETUP ---")
-    print(f"Target Time: {LAP_START_TIME_SEC}s")
-    print(f"Found GPS Coordinate at {actual_time:.2f}s:")
-    print(f"Lat: {s_lat:.6f}, Lon: {s_lon:.6f}")
+    print(f"\nTarget Start: {LAP_START_TIME_SEC}s (Lat: {s_lat:.6f}, Lon: {s_lon:.6f})")
     
-    # 2. Detect Laps using this anchor
     lap_stats, lap_indices, dists = detect_laps(df, s_lat, s_lon)
     
     print("\n--- LAP RESULTS ---")
     print(lap_stats)
     
-    # 3. Plot
+    # --- PLOTTING ---
     try:
         import mplcyberpunk
         plt.style.use("cyberpunk")
     except:
         plt.style.use('dark_background')
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(14, 7)) # Slightly wider for annotations
     
     ax.plot(df['time'], df['raw_speed'], color='#00ff9f', lw=1.5, label='Speed')
-    
-    # Mark user-defined Start Time
     ax.axvline(x=LAP_START_TIME_SEC, color='yellow', linestyle=':', alpha=0.8, label='Defined Start')
     
-    # Mark Detected Crossings
     for idx_val in lap_indices:
         t = df.iloc[idx_val]['time']
         ax.axvline(x=t, color='white', linestyle='--', alpha=0.5)
 
-    # Label Laps
-    for i, row in lap_stats.iterrows():
-        mid_time = (row['Start Time'] + row['End Time']) / 2
-        ax.text(mid_time, df['raw_speed'].max()*0.95, f"L{int(row['Lap'])}: {row['Duration']:.1f}s", 
+    # LOOP THROUGH LAPS TO ANNOTATE MAX/MIN
+    for k in range(1, len(lap_indices)):
+        start_idx = lap_indices[k-1]
+        end_idx = lap_indices[k]
+        lap_slice = df.iloc[start_idx:end_idx]
+        
+        # Max Speed
+        max_idx = lap_slice['raw_speed'].idxmax()
+        max_val = lap_slice['raw_speed'].max()
+        max_time = df.loc[max_idx, 'time']
+        
+        ax.annotate(f"{max_val:.2f}", 
+                    xy=(max_time, max_val), 
+                    xytext=(0, 15), textcoords='offset points',
+                    arrowprops=dict(arrowstyle='->', color='#ff0055', lw=1.5),
+                    color='#ff0055', ha='center', fontsize=8, fontweight='bold')
+
+        # Min Speed (Ignore 0s, often at start/spin) -> Actually user wants Min
+        min_idx = lap_slice['raw_speed'].idxmin()
+        min_val = lap_slice['raw_speed'].min()
+        min_time = df.loc[min_idx, 'time']
+        
+        ax.annotate(f"{min_val:.2f}", 
+                    xy=(min_time, min_val), 
+                    xytext=(0, -20), textcoords='offset points',
+                    arrowprops=dict(arrowstyle='->', color='cyan', lw=1.5),
+                    color='cyan', ha='center', fontsize=8, fontweight='bold')
+
+        # Lap Label
+        mid_time = (df.iloc[start_idx]['time'] + df.iloc[end_idx]['time']) / 2
+        duration = df.iloc[end_idx]['time'] - df.iloc[start_idx]['time']
+        ax.text(mid_time, df['raw_speed'].max()*1.05, f"L{k}\n{duration:.1f}s", 
                 color='white', ha='center', fontweight='bold', fontsize=9, 
                 bbox=dict(facecolor='black', alpha=0.6, edgecolor='none'))
 
-    ax.set_title(f"Lap Analysis (Start @ {LAP_START_TIME_SEC}s) - {len(lap_stats)} Laps", color='white')
+    ax.set_title(f"Lap Analysis v4a (Max/Min Pointers) - Start @ {LAP_START_TIME_SEC}s", color='white')
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Speed")
+    ax.set_ylabel("Speed (km/h)")
     ax.legend(loc='lower right')
     ax.grid(True, alpha=0.2)
     
-    plot_path = os.path.join(OUTPUT_DIR, "lap_analysis_v4.png")
+    plot_path = os.path.join(OUTPUT_DIR, "lap_analysis_v4a.png")
     plt.savefig(plot_path, dpi=150)
     print(f"\nSaved Analysis Plot: {plot_path}")

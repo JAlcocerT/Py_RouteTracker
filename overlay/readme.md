@@ -38,6 +38,7 @@ Versions
 ```sh
 python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/lap_timer.py #lap starts where video starts
 python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/lap_timer_v4.py #lap starts where lat lon of the given second of the video
+#python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/lap_timer_v4a.py #adding max/min speeds of each lap
 ```
 
 That is the tolerance "bubble" size for detecting the Start/Finish line. LAP_DETECTION_RADIUS_M = 15.0 🎯
