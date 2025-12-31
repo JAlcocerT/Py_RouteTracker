@@ -44,6 +44,8 @@
     * Sample csv Data export from **PhyPhox** (Physical Phone Experiments)
 * `./Data_Maps`:
     * Sample shp files: in `/NUTS_RG_*`folder
+* `./overlay`
+    * Overlay scripts for GoPro videos *useful for karting*
 
 </details>
 

@@ -3,11 +3,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import re
 import os
+import subprocess
 
 # --- CONIFGURATION ---
 FILE_PATH = "/home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/output-kart25dec-1c.txt"
+VIDEO_PATH = "/home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX030410.MP4"
 OUTPUT_DIR = "/home/jalcocert/Desktop/Py_RouteTracker/overlay"
-VIDEO_DURATION_SEC = 532.5
 
 # START LINE CONFIGURATION
 LAP_START_TIME_SEC = 5.0 
@@ -16,6 +17,28 @@ LAP_DETECTION_RADIUS_M = 15.0
 MIN_LAP_TIME_SEC = 30.0
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# --- AUTOMATIC DURATION ---
+def get_video_duration(video_path):
+    """Get the duration of a video file in seconds using ffprobe."""
+    if not os.path.exists(video_path):
+        print(f"Warning: Video not found at {video_path}. Using fallback.")
+        return 532.5
+        
+    try:
+        cmd = [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", video_path
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        duration = float(result.stdout.strip())
+        print(f"Detected Video Duration: {duration:.2f}s")
+        return duration
+    except Exception as e:
+        print(f"Error getting duration: {e}. Using fallback.")
+        return 532.5 # Fallback
+
+VIDEO_DURATION_SEC = get_video_duration(VIDEO_PATH)
 
 # --- 1. DATA PARSING ---
 def dms_to_dd(dms_str):
@@ -143,7 +166,7 @@ def detect_laps(df, start_lat, start_lon):
 
 if __name__ == "__main__":
     print(f"Loading {FILE_PATH}...")
-    df = parse_telemetry(FILE_PATH)
+    df = parse_telemetry(FILE_PATH, VIDEO_DURATION_SEC)
     if df.empty: exit(1)
     
     s_lat, s_lon, actual_time = get_coordinates_at_time(df, LAP_START_TIME_SEC)
@@ -161,7 +184,7 @@ if __name__ == "__main__":
     except:
         plt.style.use('dark_background')
 
-    fig, ax = plt.subplots(figsize=(14, 7)) # Slightly wider for annotations
+    fig, ax = plt.subplots(figsize=(14, 7)) 
     
     ax.plot(df['time'], df['raw_speed'], color='#00ff9f', lw=1.5, label='Speed')
     ax.axvline(x=LAP_START_TIME_SEC, color='yellow', linestyle=':', alpha=0.8, label='Defined Start')
@@ -187,7 +210,7 @@ if __name__ == "__main__":
                     arrowprops=dict(arrowstyle='->', color='#ff0055', lw=1.5),
                     color='#ff0055', ha='center', fontsize=8, fontweight='bold')
 
-        # Min Speed (Ignore 0s, often at start/spin) -> Actually user wants Min
+        # Min Speed 
         min_idx = lap_slice['raw_speed'].idxmin()
         min_val = lap_slice['raw_speed'].min()
         min_time = df.loc[min_idx, 'time']
@@ -205,19 +228,18 @@ if __name__ == "__main__":
                 color='white', ha='center', fontweight='bold', fontsize=9, 
                 bbox=dict(facecolor='black', alpha=0.6, edgecolor='none'))
 
-    ax.set_title(f"Lap Analysis v4a (Max/Min Pointers) - Start @ {LAP_START_TIME_SEC}s", color='white')
+    ax.set_title(f"Lap Analysis v4b (Auto-Duration) - Start @ {LAP_START_TIME_SEC}s", color='white')
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Speed (km/h)")
     ax.legend(loc='lower right')
     ax.grid(True, alpha=0.2)
     
-    
-    plot_path = os.path.join(OUTPUT_DIR, "lap_analysis_v4a.png")
+    plot_path = os.path.join(OUTPUT_DIR, "lap_analysis_v4b.png")
     plt.savefig(plot_path, dpi=150)
     print(f"\nSaved Analysis Plot: {plot_path}")
 
     print("\n--- Youtube Video Chapters ---")
-    print("00:00 - Intro") # Optional standard Intro
+    print("00:00 - Intro")
     for i, row in lap_stats.iterrows():
         seconds = int(row['Start Time'])
         m, s = divmod(seconds, 60)

@@ -207,6 +207,14 @@ ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
        -codec:a copy \
        -preset superfast \
        racing_v3c_output.mp4
+
+time ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX030410.MP4 \
+       -i /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v4.mp4 \
+       -filter_complex "[1:v]format=rgba,colorkey=0x000000:0.1:0.1[ckout];[0:v][ckout]overlay=W-w-50:H-h-50" \
+       -codec:a copy \
+       -preset superfast \
+       racing_v4_output.mp4
+#python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/lap_timer_v4b.py #yt chapters
 ```
 
 Tinkered with this at this post: *and with some videos*
