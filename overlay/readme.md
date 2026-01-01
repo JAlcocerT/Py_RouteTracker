@@ -35,6 +35,12 @@ ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
        -codec:a copy \
        -preset superfast \
        racing_v6_output_p1.mp4
+       
+
+ffmpeg -f concat -safe 0 \
+  -i <(printf "file '$PWD/racing_v6_output_p1.mp4'\nfile '$PWD/racing_v6_output_p2.mp4'") \
+  -c copy \
+  racing_v6_combined.mp4
 ```
 
 
