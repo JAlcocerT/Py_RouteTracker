@@ -243,9 +243,24 @@ if __name__ == "__main__":
     fig, ax = plt.subplots(figsize=(14, 7)) 
     ax.plot(df['time'], df['raw_speed'], color='#00ff9f', lw=1.5, label='Speed')
     ax.axvline(x=LAP_START_TIME_SEC, color='yellow', linestyle=':', alpha=0.8, label='Defined Start')
-    for idx_val in lap_indices:
-        t = df.iloc[idx_val]['time']
-        ax.axvline(x=t, color='white', linestyle='--', alpha=0.5)
+    for k in range(1, len(lap_indices)):
+        start_idx = lap_indices[k-1]; end_idx = lap_indices[k]
+        lap_slice = df.iloc[start_idx:end_idx]
+        
+        # Max
+        max_idx = lap_slice['raw_speed'].idxmax(); max_val = lap_slice['raw_speed'].max()
+        ax.annotate(f"{max_val:.2f}", xy=(df.loc[max_idx, 'time'], max_val), xytext=(0, 15), 
+                    textcoords='offset points', arrowprops=dict(arrowstyle='->', color='#ff0055', lw=1.5), 
+                    color='#ff0055', ha='center', fontsize=8, fontweight='bold')
+        # Min
+        min_idx = lap_slice['raw_speed'].idxmin(); min_val = lap_slice['raw_speed'].min()
+        ax.annotate(f"{min_val:.2f}", xy=(df.loc[min_idx, 'time'], min_val), xytext=(0, -20), 
+                    textcoords='offset points', arrowprops=dict(arrowstyle='->', color='cyan', lw=1.5), 
+                    color='cyan', ha='center', fontsize=8, fontweight='bold')
+        # Label
+        mid_time = (df.iloc[start_idx]['time'] + df.iloc[end_idx]['time']) / 2
+        ax.text(mid_time, df['raw_speed'].max()*1.05, f"L{k}\n{lap_stats.iloc[k-1]['Duration']:.1f}s", 
+                color='white', ha='center', fontweight='bold', fontsize=9, bbox=dict(facecolor='black', alpha=0.6, edgecolor='none'))
     
     plot_path = os.path.join(OUTPUT_DIR, "lap_analysis_v6.png")
     plt.savefig(plot_path, dpi=150)
