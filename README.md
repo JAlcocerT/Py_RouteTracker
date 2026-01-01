@@ -24,6 +24,7 @@
 
 ## What can Py_RouteTracker do?
 
+For anyone who is interested in analyzing location and routes data with Python via GPX or action camera outputs.
 
 <details>
   <summary>Main Folder</summary>
@@ -105,12 +106,12 @@ These **2 projects** are fantastic to work with:
 
 ## :scroll: License
 
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License (GPL) version 3.0:
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License (GPL) version 3.0:
 
-    Freedom to use: You can use the software for any purpose, without any restrictions.
-    Freedom to study and modify: You can examine the source code, learn from it, and modify it to suit your needs.
-    Freedom to share: You can share the original software or your modified versions with others, so they can benefit from it too.
-    Copyleft: When you distribute the software or any derivative works, you must do so under the same GPL-3.0 license. This ensures that the software and its derivatives remain free and open-source.
+Freedom to use: You can use the software for any purpose, without any restrictions.
+Freedom to study and modify: You can examine the source code, learn from it, and modify it to suit your needs.
+Freedom to share: You can share the original software or your modified versions with others, so they can benefit from it too.
+Copyleft: When you distribute the software or any derivative works, you must do so under the same GPL-3.0 license. This ensures that the software and its derivatives remain free and open-source.
 
-    This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY.

@@ -6,7 +6,7 @@ import os
 import subprocess
 
 # --- CONFIGURATION ---
-VIDEO_PATH = "/home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020411.MP4"
+VIDEO_PATH = "/home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020411.MP4" #generates the telemetry txt with the GPS data automatically via exiftool
 OUTPUT_DIR = "/home/jalcocert/Desktop/Py_RouteTracker/overlay"
 
 # START LINE CONFIGURATION
