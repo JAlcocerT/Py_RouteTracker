@@ -378,7 +378,42 @@ if __name__ == "__main__":
             mark = "🔥 BEST LAP" if row['Lap'] == best_lap_num else ""
             print(f"{m:02d}:{s:02d} - Lap {int(row['Lap'])} ({row['Duration']:.2f}s) {mark}")
             
-        # 5. Best Lap Slicing
+        # 5a. Generate Static Analysis Plot (From v5)
+        try:
+            plt.style.use("cyberpunk")
+        except: plt.style.use('dark_background')
+        
+        fig_stat, ax_stat = plt.subplots(figsize=(14, 7))
+        ax_stat.plot(df_final['time'], df_final['speed'], color='#00ff9f', lw=1.5, label='Speed')
+        ax_stat.axvline(x=LAP_START_TIME_SEC, color='yellow', linestyle=':', alpha=0.8, label='Start')
+        
+        for lx in laps_idx:
+            ax_stat.axvline(x=df_final.iloc[lx]['time'], color='white', linestyle='--', alpha=0.5)
+            
+        for k in range(1, len(laps_idx)):
+            s_idx = laps_idx[k-1]; e_idx = laps_idx[k]
+            sl = df_final.iloc[s_idx:e_idx]
+            mx_i = sl['speed'].idxmax(); mx_v = sl['speed'].max()
+            mn_i = sl['speed'].idxmin(); mn_v = sl['speed'].min()
+            
+            # Annotations
+            ax_stat.annotate(f"{mx_v:.1f}", (df_final.loc[mx_i,'time'], mx_v), xytext=(0,10), 
+                             textcoords='offset points', color='#ff0055', ha='center', fontsize=8, arrowprops=dict(arrowstyle='->', color='#ff0055'))
+            ax_stat.annotate(f"{mn_v:.1f}", (df_final.loc[mn_i,'time'], mn_v), xytext=(0,-15), 
+                             textcoords='offset points', color='cyan', ha='center', fontsize=8, arrowprops=dict(arrowstyle='->', color='cyan'))
+            
+            # Label
+            mid = (df_final.iloc[s_idx]['time'] + df_final.iloc[e_idx]['time'])/2
+            dur_val = (df_final.iloc[e_idx]['time'] - df_final.iloc[s_idx]['time'])
+            ax_stat.text(mid, mx_v*1.05, f"L{k}\n{dur_val:.1f}s", color='white', ha='center', 
+                         fontsize=9, bbox=dict(facecolor='black', alpha=0.6, edgecolor='none'))
+                         
+        pname = os.path.join(OUTPUT_DIR, f"lap_analysis_{os.path.basename(VIDEO_PATH)[:-4]}.png")
+        fig_stat.savefig(pname, dpi=100)
+        plt.close(fig_stat)
+        print(f"Saved Plot: {pname}")
+
+        # 5b. Best Lap Slicing
         if SLICE_BEST_LAP:
             best_row = lap_stats.loc[best_lap_idx]
             t_start = max(0, best_row['Start Time'] - SLICE_BUFFER_SEC)

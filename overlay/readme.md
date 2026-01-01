@@ -26,7 +26,9 @@ ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX030410.MP4 \
        racing_v4_output.mp4
 
 #python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/lap_timer_v4a.py #lap starts where lat lon of the given second of the video
-python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/lap_timer_v5.py #slices best lap
+#python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/lap_timer_v5.py #slices best lap
+
+python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/lap_timer_v6.py #possibility to compare 2 laps
 
 #time python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v6.py #now extracts everything (GPS and ACCL into a bin)
 ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
@@ -35,7 +37,7 @@ ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
        -codec:a copy \
        -preset superfast \
        racing_v6_output_p1.mp4
-       
+
 
 ffmpeg -f concat -safe 0 \
   -i <(printf "file '$PWD/racing_v6_output_p1.mp4'\nfile '$PWD/racing_v6_output_p2.mp4'") \
