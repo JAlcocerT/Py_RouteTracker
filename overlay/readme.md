@@ -24,7 +24,17 @@ ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX030410.MP4 \
        -codec:a copy \
        -preset superfast \
        racing_v4_output.mp4
-python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/lap_timer_v4a.py #lap starts where lat lon of the given second of the video
+
+#python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/lap_timer_v4a.py #lap starts where lat lon of the given second of the video
+python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/lap_timer_v5.py #slices best lap
+
+#time python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v6.py #now extracts everything (GPS and ACCL into a bin)
+ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/GX020410.MP4 \
+       -i /home/jalcocert/Desktop/Py_RouteTracker/overlay/HUD_v6_GX020410.mp4 \
+       -filter_complex "[1:v]format=rgba,colorkey=0x000000:0.1:0.1[ckout];[0:v][ckout]overlay=W-w-50:H-h-50" \
+       -codec:a copy \
+       -preset superfast \
+       racing_v6_output_p1.mp4
 ```
 
 
@@ -130,6 +140,7 @@ python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/prepend_intro.py
 ```
 
 ### Manual FFmpeg Commands (No Script)
+
 If you prefer running it yourself, here is the magic 2-step process (avoids re-encoding the main video):
 
 **1. Generate the Intro (Must match GoPro Codec)**
