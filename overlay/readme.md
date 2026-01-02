@@ -43,6 +43,23 @@ ffmpeg -f concat -safe 0 \
   -i <(printf "file '$PWD/racing_v6_output_p1.mp4'\nfile '$PWD/racing_v6_output_p2.mp4'") \
   -c copy \
   racing_v6_combined.mp4
+
+# --- V7: Multi-File Session ---
+# Edit VIDEO_FILES list in the script first!
+python3.10 /home/jalcocert/Desktop/Py_RouteTracker/overlay/racing_hud_v7.py
+#cd Z_GoPro
+ffmpeg -f concat -safe 0 \
+  -i <(printf "file '$PWD/GX010411.MP4'\nfile '$PWD/GX020411.MP4'") \
+  -c copy \
+  racing_session2.mp4
+  
+#https://youtu.be/c0YkQhsUNrg
+ffmpeg -i /home/jalcocert/Desktop/Py_RouteTracker/Z_GoPro/racing_session2.mp4 \
+       -i /home/jalcocert/Desktop/Py_RouteTracker/overlay/HUD_v7_Session.mp4 \
+       -filter_complex "[1:v]format=rgba,colorkey=0x000000:0.1:0.1[ckout];[0:v][ckout]overlay=W-w-50:H-h-50" \
+       -codec:a copy \
+       -preset superfast \
+       racing_v7_output.mp4
 ```
 
 
