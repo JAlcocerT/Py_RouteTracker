@@ -1,6 +1,11 @@
 Extracting **gopro metadata**.
 
-> Extended [blog post](https://jalcocert.github.io/JAlcocerT/dji-oa5pro-firmware-updates/#extracting-telemetry-data-from-gph9)
+Extended blog posts:
+
+1. https://jalcocert.github.io/JAlcocerT/dji-oa5pro-firmware-updates/#extracting-telemetry-data-from-gph9
+2. https://jalcocert.github.io/JAlcocerT/geospatial-data
+3. https://jalcocert.github.io/JAlcocerT/tinkering-telemetry-trackdays
+4. https://jalcocert.github.io/JAlcocerT/blog/tinker-racing/#onboard-telemetry
 
 * https://medium.com/@jrballesteros/a-simple-guide-to-extract-gps-information-from-gopro-photos-and-videos-cf6edf6dc601
     * https://github.com/exiftool/exiftool/blob/master/fmt_files/gpx.fmt
