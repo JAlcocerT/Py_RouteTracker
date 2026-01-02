@@ -18,6 +18,7 @@ MIN_LAP_TIME_SEC = 30.0
 # FEATURES
 SLICE_BEST_LAP = True
 SLICE_BUFFER_SEC = 5.0
+EXTREMA_WINDOW = 30 # +/- points for local max/min detection
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -177,7 +178,7 @@ def compare_laps_extrema(df, lap_stats, lap_indices, l1, l2):
     slice2['rel_time'] = slice2['time'] - slice2.iloc[0]['time']
     
     # --- Detect Extrema ---
-    w = 10 # Window size (tunable)
+    w = EXTREMA_WINDOW # Window size (tunable)
     max1 = find_local_extrema(slice1['raw_speed'], window=w, mode='max')
     min1 = find_local_extrema(slice1['raw_speed'], window=w, mode='min')
     max2 = find_local_extrema(slice2['raw_speed'], window=w, mode='max')
@@ -247,6 +248,48 @@ def compare_laps_extrema(df, lap_stats, lap_indices, l1, l2):
     out_path = os.path.join(OUTPUT_DIR, out_name)
     plt.savefig(out_path, dpi=150)
     print(f"Saved Extrema Plot: {out_path}")
+    plt.close(fig)
+    
+    # Generate Detailed Table Image
+    save_extrema_table(l1, l2, max1, min1, max2, min2, slice1, slice2)
+
+def save_extrema_table(l1, l2, max1, min1, max2, min2, slice1, slice2):
+    data = []
+    # Lap 1
+    t1 = slice1['rel_time'].values; vals1 = slice1['raw_speed'].values
+    for idx, val in max1: data.append({'Lap': l1, 'Time': t1[idx], 'Speed': val, 'Type': 'MAX'})
+    for idx, val in min1: data.append({'Lap': l1, 'Time': t1[idx], 'Speed': val, 'Type': 'MIN'})
+    # Lap 2
+    t2 = slice2['rel_time'].values; vals2 = slice2['raw_speed'].values
+    for idx, val in max2: data.append({'Lap': l2, 'Time': t2[idx], 'Speed': val, 'Type': 'MAX'})
+    for idx, val in min2: data.append({'Lap': l2, 'Time': t2[idx], 'Speed': val, 'Type': 'MIN'})
+    
+    if not data: return
+    df_table = pd.DataFrame(data).sort_values(by='Time')
+    
+    try: plt.style.use("cyberpunk")
+    except: plt.style.use('dark_background')
+    fig, ax = plt.subplots(figsize=(10, max(4, len(df_table)*0.4)))
+    ax.axis('off'); ax.axis('tight')
+    
+    cell_text = []
+    for _, row in df_table.iterrows():
+        cell_text.append([f"Lap {int(row['Lap'])}", f"{row['Time']:.1f}s", f"{row['Speed']:.1f}", row['Type']])
+        
+    cols = ["Lap", "Time (s)", "Speed (km/h)", "Type"]
+    table = ax.table(cellText=cell_text, colLabels=cols, loc='center', cellLoc='center')
+    table.auto_set_font_size(False); table.set_fontsize(11); table.scale(1, 1.8)
+    
+    for (r, c), cell in table.get_celld().items():
+        cell.set_facecolor('#1a1a1a'); cell.set_edgecolor('#00ff9f' if r > 0 else 'white'); cell.set_text_props(color='white')
+        if r == 0: cell.set_facecolor('#333333'); cell.set_text_props(weight='bold', color='#00ff9f')
+        else:
+            if cell_text[r-1][3] == 'MAX': cell.set_text_props(color='#ff0055') 
+            if cell_text[r-1][3] == 'MIN': cell.set_text_props(color='cyan')
+
+    pname = os.path.join(OUTPUT_DIR, f"lap_compare_table_L{l1}_vs_L{l2}.png")
+    plt.savefig(pname, dpi=150, bbox_inches='tight')
+    print(f"Saved Detailed Table: {pname}")
     plt.close(fig)
 
 # --- 5b. STANDARD COMPARISON (V6) ---
