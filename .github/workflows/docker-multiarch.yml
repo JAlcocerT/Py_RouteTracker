@@ -40,7 +40,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libimage-exiftool-perl
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v9
+        # astral-sh/setup-uv, unlike the other actions pinned in this file,
+        # doesn't publish a rolling major-version tag (no bare "v9") -- only
+        # exact versions. Pin and bump this by hand when needed.
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: "backend/uv.lock"
