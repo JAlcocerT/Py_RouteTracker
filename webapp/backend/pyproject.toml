@@ -1,0 +1,28 @@
+[project]
+name = "routetracker-backend"
+version = "0.1.0"
+description = "Backend for the Py_RouteTracker telemetry overlay webapp"
+readme = "readme.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.12",
+    "pydantic>=2.9",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "matplotlib>=3.9,<3.11",  # mplcyberpunk 0.7.6 pokes matplotlib.style.core, removed in 3.11
+    "mplcyberpunk>=0.7",
+    "gpxpy>=1.6",
+    "pyarrow>=17.0",
+    "pillow>=12.3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

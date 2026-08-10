@@ -1,0 +1,16 @@
+services:
+  routetracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # Bound to all host interfaces (not just 127.0.0.1), so this is
+      # reachable both from localhost and from any device on your Tailscale
+      # network via the host's Tailscale IP -- no extra network config needed.
+      - "7000:7000"
+    volumes:
+      - routetracker_data:/data
+    restart: unless-stopped
+
+volumes:
+  routetracker_data:
