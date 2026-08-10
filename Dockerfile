@@ -1,24 +1,36 @@
-FROM python:3.10
+# --- stage 1: build the React frontend ---
+FROM node:20-slim AS frontend-build
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
 
-# Copy local code to the container image.
-ENV APP_HOME /app
-WORKDIR $APP_HOME
+# --- stage 2: backend runtime ---
+FROM python:3.12-slim AS backend
 
-COPY . ./
-
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    software-properties-common \
-    git \
+# ffmpeg provides both ffmpeg and ffprobe; libimage-exiftool-perl provides exiftool.
+# None of the original overlay/*.py scripts ever verified these were installed --
+# app.core.binaries checks for them at call time and fails with a clear error
+# instead of a buried subprocess traceback.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libimage-exiftool-perl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install production dependencies.
-#RUN pip install -r ./Z_Deploy_me/requirements.txt
-RUN pip install -r requirements.txt
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-EXPOSE 8501
+WORKDIR /app
+COPY backend/pyproject.toml backend/uv.lock ./
+RUN uv sync --frozen --no-install-project
 
-#CMD python ./app/app.py
+COPY backend/app ./app
+COPY --from=frontend-build /frontend/dist ./static
 
-#ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+ENV PATH="/app/.venv/bin:$PATH"
+ENV ROUTETRACKER_DATA_DIR=/data
+
+VOLUME ["/data"]
+EXPOSE 7000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7000"]
