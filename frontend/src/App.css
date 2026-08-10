@@ -56,6 +56,21 @@ section h2 {
   margin-top: 12px;
 }
 
+.expiry-notice {
+  margin-top: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: 13px;
+  max-width: 480px;
+}
+
+.expiry-notice strong {
+  color: var(--accent);
+}
+
 /* --- upload page --- */
 
 .source-toggle {

@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api import routes_jobs, routes_laps, routes_render, routes_videos
+from app.core.cleanup import RetentionSweeper
+from app.core.state import job_manager, settings, video_store
 
-app = FastAPI(title="Py_RouteTracker Telemetry Overlay")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    sweeper = RetentionSweeper(video_store, settings, job_manager, interval_seconds=settings.sweep_interval_seconds)
+    sweeper.start()
+    yield
+    sweeper.stop()
+
+
+app = FastAPI(title="Py_RouteTracker Telemetry Overlay", lifespan=lifespan)
 
 app.include_router(routes_videos.router)
 app.include_router(routes_laps.router)
@@ -17,7 +29,7 @@ app.include_router(routes_jobs.router)
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "retention_minutes": settings.retention_minutes}
 
 
 # Starlette matches routes in registration order, and a Mount("/") matches

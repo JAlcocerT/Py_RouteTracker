@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -70,20 +71,29 @@ async def start_render(video_id: str, body: RenderRequest):
     work_dir = settings.work_dir / job_id
 
     def render(progress_cb):
-        render_and_composite(
-            source_video=Path(meta.video_path),
-            annotated_telemetry=df,
-            lap_indices=lap_indices,
-            config=config,
-            trim_start=body.trim_start,
-            trim_end=body.trim_end,
-            work_dir=work_dir,
-            output_path=output_path,
-            n_workers=settings.max_render_workers,
-            on_progress=progress_cb,
-        )
-        return {"output_file": str(output_path), "download_url": f"/api/render/{job_id}/download"}
+        try:
+            render_and_composite(
+                source_video=Path(meta.video_path),
+                annotated_telemetry=df,
+                lap_indices=lap_indices,
+                config=config,
+                trim_start=body.trim_start,
+                trim_end=body.trim_end,
+                work_dir=work_dir,
+                output_path=output_path,
+                n_workers=settings.max_render_workers,
+                on_progress=progress_cb,
+            )
+        finally:
+            # work_dir (the trimmed clip + hundreds/thousands of HUD frame
+            # PNGs) is pure scratch space -- it has zero value once
+            # render_and_composite has produced (or failed to produce)
+            # output_path, so it's deleted immediately rather than left to
+            # accumulate on disk until the video's retention window expires.
+            shutil.rmtree(work_dir, ignore_errors=True)
+        return {"output_file": str(output_path), "video_id": video_id}
 
+    video_store.update(video_id, render_job_ids=[*meta.render_job_ids, job_id])
     job_manager.submit(job_id, render)
     return {"job_id": job_id}
 
@@ -95,7 +105,14 @@ async def download_render(job_id: str):
         raise HTTPException(404, "job not found")
     if job.status != "done":
         raise HTTPException(400, f"render job is not finished (status={job.status})")
-    output_file = job.result.get("output_file") if job.result else None
+
+    result = job.result or {}
+    output_file = result.get("output_file")
     if not output_file or not Path(output_file).exists():
-        raise HTTPException(410, "rendered file is no longer available")
-    return FileResponse(output_file, media_type="video/mp4", filename=Path(output_file).name)
+        raise HTTPException(410, "This file has expired (uploaded/rendered videos are temporary and auto-deleted after the retention window -- see /api/health).")
+
+    video_meta = video_store.get(result.get("video_id", ""))
+    base_name = Path(video_meta.filename).stem if video_meta else "overlay"
+    download_name = f"{base_name}_overlay.mp4"
+
+    return FileResponse(output_file, media_type="video/mp4", filename=download_name)

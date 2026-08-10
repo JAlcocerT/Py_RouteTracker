@@ -65,6 +65,10 @@ export async function getVideo(videoId: string): Promise<VideoMeta> {
   return asJson(await fetch(`/api/videos/${videoId}`))
 }
 
+export async function getHealth(): Promise<{ status: string; retention_minutes: number }> {
+  return asJson(await fetch('/api/health'))
+}
+
 export async function getTelemetry(videoId: string, maxPoints = 2000): Promise<TelemetryPoint[]> {
   const resp = await fetch(`/api/videos/${videoId}/telemetry?max_points=${maxPoints}`)
   const body = await asJson<{ points: TelemetryPoint[] }>(resp)

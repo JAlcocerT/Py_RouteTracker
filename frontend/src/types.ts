@@ -12,6 +12,9 @@ export interface VideoMeta {
   laps_ready: boolean
   extraction_job_id: string | null
   lap_start_time_s: number | null
+  render_job_ids: string[]
+  created_at: string
+  expires_at: string
 }
 
 export interface TelemetryPoint {

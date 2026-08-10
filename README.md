@@ -23,8 +23,7 @@ download the result — with the HUD automatically composited onto your real foo
 docker compose up --build
 ```
 
-Then open http://localhost:7000. Uploaded videos and rendered output persist in the
-`routetracker_data` Docker volume across restarts.
+Then open http://localhost:7000.
 
 ### Accessing it from other devices over Tailscale
 
@@ -34,6 +33,20 @@ Tailscale network at `http://<this-machine's-tailscale-ip-or-MagicDNS-name>:7000
 extra Docker network configuration needed. If it's not reachable, check that your host's
 firewall (e.g. `ufw`) allows inbound connections on port 7000 from the `tailscale0`
 interface.
+
+## Storage & privacy
+
+This isn't video hosting — uploaded source videos and rendered output are **temporary**.
+They're kept just long enough to render and download (default **60 minutes** from upload,
+regardless of whether you've downloaded yet), then automatically deleted by a background
+sweeper; nothing is kept in permanent storage on the host. Per-render scratch files (the
+trimmed clip and the intermediate HUD frame images) are deleted immediately once a render
+finishes, before that window even starts. The download page tells you exactly when your
+file will be removed.
+
+Tune this with environment variables on the `routetracker` service in `docker-compose.yml`:
+- `ROUTETRACKER_RETENTION_MINUTES` (default `60`) — how long a video/render is kept.
+- `ROUTETRACKER_SWEEP_INTERVAL_SECONDS` (default `300`) — how often the cleanup pass runs.
 
 ## Supported telemetry sources
 

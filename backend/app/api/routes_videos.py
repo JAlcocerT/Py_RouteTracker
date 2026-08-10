@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -94,7 +94,10 @@ async def get_video(video_id: str):
     meta = video_store.get(video_id)
     if meta is None:
         raise HTTPException(404, "video not found")
-    return meta.to_json()
+    data = meta.to_json()
+    created = datetime.fromisoformat(meta.created_at)
+    data["expires_at"] = (created + timedelta(minutes=settings.retention_minutes)).isoformat()
+    return data
 
 
 @router.get("/{video_id}/telemetry")

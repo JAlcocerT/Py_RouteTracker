@@ -73,3 +73,24 @@ Tuning knobs (env vars, both have safe defaults):
 - `ROUTETRACKER_TARGET_FPS` — defaults to 30. Not changed by this round of tuning (lowering it
   would reduce render workload further but was left alone deliberately, since it trades
   smoothness for speed rather than being a free win).
+
+## Storage lifecycle
+
+Two independent, always-on cleanup mechanisms (see root `README.md` for the user-facing
+version) — neither is optional, both are covered by `tests/test_cleanup.py` and
+`tests/test_api.py`:
+
+1. **Per-render scratch** (`work_dir`: the trimmed clip + HUD frame PNGs) is deleted in a
+   `finally` block in `routes_render.py`, immediately after `render_and_composite` returns or
+   raises. It never survives past a single render job.
+2. **Uploaded videos, GPX files, cached telemetry/lap parquet, and rendered output** are
+   deleted by `app.core.cleanup.RetentionSweeper`, a daemon thread started in `main.py`'s
+   lifespan handler that runs `sweep_expired_videos` every `ROUTETRACKER_SWEEP_INTERVAL_SECONDS`
+   (default 300s). A video is deleted once `ROUTETRACKER_RETENTION_MINUTES` (default 60) have
+   passed since `VideoMeta.created_at` — *unless* its extraction job or any of its render jobs
+   (`VideoMeta.render_job_ids`) is still `pending`/`running`, in which case it's left alone and
+   retried on the next sweep, so a slow render's files are never pulled out from under it.
+
+`GET /api/health` reports the current `retention_minutes`, and `GET /api/videos/{id}` reports
+that video's computed `expires_at` — the frontend uses both to tell users when their file will
+be gone.

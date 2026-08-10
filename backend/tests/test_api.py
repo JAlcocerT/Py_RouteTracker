@@ -19,6 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.routes_videos as routes_videos
+from app.core.state import settings
 from app.main import app
 from app.telemetry.sources.external_gpx import load_gpx_points
 
@@ -89,6 +90,16 @@ def test_upload_and_extract_telemetry(uploaded_video):
     meta = resp.json()
     assert meta["telemetry_ready"] is True
     assert meta["source_type"] == "external_gpx"
+    # uploaded videos are temporary -- the API tells the client when this
+    # one will be automatically deleted
+    assert "expires_at" in meta
+    assert meta["expires_at"] > meta["created_at"]
+
+
+def test_health_reports_retention_window():
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    assert resp.json()["retention_minutes"] > 0
 
 
 def test_get_telemetry_points(uploaded_video):
@@ -135,6 +146,11 @@ def test_render_job_lifecycle(uploaded_video):
         download = client.get(f"/api/render/{job_id}/download")
         assert download.status_code == 200
         assert download.headers["content-type"] == "video/mp4"
+        # friendly filename derived from the original upload, not raw UUIDs
+        assert 'filename="clip_overlay.mp4"' in download.headers["content-disposition"]
+        # the trimmed clip + HUD frame PNGs are pure scratch space and must
+        # not be left on disk once the render is done (see routes_render.py)
+        assert not (settings.work_dir / job_id).exists()
     else:
         # no ffmpeg on this machine -- confirm we fail loudly and specifically,
         # not silently or with an unrelated traceback

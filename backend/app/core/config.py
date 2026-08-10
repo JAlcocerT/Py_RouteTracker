@@ -24,6 +24,13 @@ class Settings:
         default_workers = min(4, max(1, (os.cpu_count() or 2) - 1))
         self.max_render_workers = int(os.environ.get("ROUTETRACKER_MAX_RENDER_WORKERS", str(default_workers)))
 
+        # This is a local tool, not video storage -- uploaded source videos
+        # and rendered output are only ever meant to live on disk long
+        # enough to download the result. app.core.cleanup deletes each
+        # video's files once they're older than this many minutes.
+        self.retention_minutes = float(os.environ.get("ROUTETRACKER_RETENTION_MINUTES", "60"))
+        self.sweep_interval_seconds = float(os.environ.get("ROUTETRACKER_SWEEP_INTERVAL_SECONDS", "300"))
+
         for d in (self.upload_dir, self.cache_dir, self.output_dir, self.work_dir):
             d.mkdir(parents=True, exist_ok=True)
 

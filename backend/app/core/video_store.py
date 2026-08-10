@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -26,6 +27,10 @@ class VideoMeta:
     laps_ready: bool = False
     extraction_job_id: str | None = None
     lap_start_time_s: float | None = None
+    # Used by app.core.cleanup's retention sweeper -- uploaded/processed
+    # video files are temporary, not permanent storage (see that module).
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    render_job_ids: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict:
         return asdict(self)
