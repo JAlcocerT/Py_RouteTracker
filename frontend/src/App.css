@@ -302,13 +302,13 @@ section h2 {
   color: var(--accent);
 }
 
-/* --- render progress --- */
+/* --- progress bar (shared: upload progress, render progress) --- */
 
-.render-progress {
+.progress {
   margin-top: 24px;
 }
 
-.render-progress__bar {
+.progress__bar {
   height: 14px;
   background: var(--bg-panel);
   border-radius: 8px;
@@ -316,13 +316,14 @@ section h2 {
   border: 1px solid var(--border);
 }
 
-.render-progress__fill {
+.progress__fill {
   height: 100%;
   background: linear-gradient(90deg, var(--accent-dim), var(--accent));
   transition: width 0.3s ease;
 }
 
-.render-progress__label {
+.progress__label {
   margin-top: 8px;
   color: var(--text-dim);
+  font-size: 13px;
 }

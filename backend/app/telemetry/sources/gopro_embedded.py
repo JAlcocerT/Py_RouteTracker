@@ -1,6 +1,6 @@
 """GoPro embedded-metadata telemetry source.
 
-Ported from overlay/racing_hud_v7.py:61-151 and overlay/lap_timer_v7.py:26-91.
+Ported from legacy/overlay/racing_hud_v7.py:61-151 and legacy/overlay/lap_timer_v7.py:26-91.
 Behavior is unchanged (same regexes, same GPMD ACCL struct layout, same
 km/h conversion); what changed is that every knob is now a function argument
 instead of a module-level constant, and paths are injected rather than

@@ -1,7 +1,7 @@
 """Render orchestration: parallel HUD-frame rendering + ffmpeg compositing.
 
 This is the module that fixes the two biggest problems the audit found in
-overlay/racing_hud_v7.py:
+legacy/overlay/racing_hud_v7.py:
   1. Rendering was single-threaded matplotlib (the repo's own comparison.md
      logs a 14+ minute render for one clip) -- here frames are split across
      worker processes.

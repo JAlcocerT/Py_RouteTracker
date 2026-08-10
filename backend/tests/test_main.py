@@ -4,7 +4,7 @@ app.mount("/", StaticFiles(...)) was registered before the plain
 order and a Mount("/") matches every path as a prefix, so the mount
 shadowed /api/health (and would have shadowed any other route registered
 after it) into a 404 from StaticFiles instead of ever reaching our handler.
-This never failed locally because webapp/backend/static doesn't exist in
+This never failed locally because backend/static doesn't exist in
 dev, so the mount was skipped entirely -- it only broke once the Docker
 image (which does have a built frontend) was actually run.
 """

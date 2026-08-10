@@ -1,6 +1,6 @@
-"""HUD drawing: ported from overlay/racing_hud_v7.py:252-338.
+"""HUD drawing: ported from legacy/overlay/racing_hud_v7.py:252-338.
 
-Two real changes from the original:
+Three real changes from the original:
   1. Every widget (speed arc, G-G diagram, minimap, session graph) is
      independently toggle-able via RenderConfig instead of always-on.
   2. The figure is drawn with a transparent background (`transparent=True`
@@ -9,10 +9,29 @@ Two real changes from the original:
      video_render.py composites this PNG sequence onto the real footage
      via ffmpeg's `overlay` filter, closing the gap where v7 only ever
      produced a standalone HUD clip.
+  3. Frames are captured via real matplotlib blitting instead of
+     `Figure.savefig`. v7's own `update()` already returned exactly the
+     tuple of changed artists FuncAnimation's blitting API expects — but
+     that was cosmetic: `Animation.save()` always calls `Figure.savefig`
+     per frame regardless of `blit=True`, which redoes a full figure
+     layout/redraw (axes, ticks, the static route line, glow effects, ...)
+     on every single frame. That's the actual reason renders were so slow
+     (overlay/comparison.md logs 14+ minutes for one clip). Here, the
+     static background (everything that doesn't change frame-to-frame) is
+     rendered and cached once via `copy_from_bbox`; each frame only
+     restores that cached region and redraws the handful of artists that
+     actually moved (`draw_artist` + `blit`), then the canvas' raw RGBA
+     buffer is saved directly with PIL — skipping `savefig`'s relayout
+     entirely. Same pixels, same DPI, same visual output; just far less
+     redundant work per frame. Combined with the multiprocessing
+     frame-chunking in video_render.py, this is the main lever for making
+     renders usable on modest, shared/non-dedicated hardware.
 
 This module renders ONE frame at a time (`draw_frame`) rather than using
 matplotlib.animation.FuncAnimation — FuncAnimation buys nothing once
-video_render.py is doing the parallelization and file-writing itself.
+video_render.py is doing the parallelization and file-writing itself, and
+manual blitting needs direct control over the restore/draw/blit sequence
+anyway.
 """
 
 from __future__ import annotations
@@ -29,6 +48,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.gridspec import GridSpec
+from PIL import Image
 
 try:
     import mplcyberpunk
@@ -71,7 +91,13 @@ class HudRenderer:
         self.df = df.reset_index(drop=True)
         self.lap_indices = [i for i in lap_indices if 0 <= i < len(self.df)]
         self.config = config
+        self._dynamic_artists: list = []
         self._build_figure()
+        # First full draw renders (and lets us cache) everything static --
+        # axes, static route/session lines, glow effects -- while the
+        # dynamic artists above are still in their empty initial state.
+        self.fig.canvas.draw()
+        self._background = self.fig.canvas.copy_from_bbox(self.fig.bbox)
 
     def _build_figure(self) -> None:
         cfg = self.config
@@ -123,6 +149,7 @@ class HudRenderer:
         self.last_txt = self.ax_spd.text(0.9, 0.85, "LAST", fontsize=12, color="yellow", ha="right", fontweight="bold", path_effects=_OUTLINE)
         self.ax_spd.set_xlim(0, 1)
         self.ax_spd.set_ylim(0, 1)
+        self._dynamic_artists += [self.sp_arc, self.sp_txt, self.lap_txt, self.last_txt]
 
     def _build_gg(self) -> None:
         cfg = self.config
@@ -136,12 +163,14 @@ class HudRenderer:
         self.gg_trail, = self.ax_gg.plot([], [], color="cyan", lw=2, alpha=0.6, path_effects=_OUTLINE)
         self.gg_ball, = self.ax_gg.plot([], [], "o", color="#ff0055", markersize=12, mec="white", zorder=10)
         self.gg_txt = self.ax_gg.text(0.05, 0.9, "", transform=self.ax_gg.transAxes, color="white", fontsize=10, path_effects=_OUTLINE)
+        self._dynamic_artists += [self.gg_trail, self.gg_ball, self.gg_txt]
 
     def _build_minimap(self) -> None:
         self.ax_map.set_aspect("equal")
         self.ax_map.plot(self.df["lon"], self.df["lat"], color="cyan", lw=2, alpha=0.3)
         self.map_dot, = self.ax_map.plot([], [], "o", color="white", mec="red", mew=2, ms=8)
         self.map_tail, = self.ax_map.plot([], [], color="#00ff9f", lw=3, alpha=0.9, path_effects=_OUTLINE)
+        self._dynamic_artists += [self.map_dot, self.map_tail]
 
     def _build_session_graph(self) -> None:
         self.ax_gph.set_title("SESSION TELEMETRY", color="white", fontsize=9, pad=5, path_effects=_OUTLINE)
@@ -153,6 +182,7 @@ class HudRenderer:
         self.ax_gph.set_xlim(self.df["time"].min(), self.df["time"].max())
         top = self.df["speed"].max()
         self.ax_gph.set_ylim(0, top * 1.1 if top > 0 else 1)
+        self._dynamic_artists += [self.gph_line, self.gph_dot]
 
     def draw_frame(self, f: int) -> None:
         if f >= len(self.df):
@@ -191,7 +221,20 @@ class HudRenderer:
             self.gph_dot.set_data([row["time"]], [row["speed"]])
 
     def save_frame(self, path: Path) -> None:
-        self.fig.savefig(path, transparent=True, dpi=self.config.dpi)
+        """Captures the current frame via blitting instead of `savefig` --
+        see the module docstring for why this is the main render-speed
+        lever. Pixel output is identical to a transparent `savefig` at the
+        same DPI; `compress_level=1` only trades (irrelevant, temporary)
+        file size for faster PNG encoding, not image quality -- PNG
+        compression is lossless at every level."""
+        self.fig.canvas.restore_region(self._background)
+        for artist in self._dynamic_artists:
+            artist.axes.draw_artist(artist)
+        self.fig.canvas.blit(self.fig.bbox)
+
+        width, height = self.fig.canvas.get_width_height()
+        buf = self.fig.canvas.buffer_rgba()
+        Image.frombuffer("RGBA", (width, height), buf, "raw", "RGBA", 0, 1).save(path, compress_level=1)
 
     def close(self) -> None:
         plt.close(self.fig)

@@ -1,9 +1,6 @@
 
-> **This folder is now a research log, not the way to use this project.** The logic here has
-> been ported into a proper webapp at `../webapp/` (drag-and-drop upload, trim, widget
-> picker, automatic HUD compositing — see `../webapp/README.md`). Superseded script versions
-> (everything except `racing_hud_v7.py`, `lap_timer_v7.py`, `circuit_mapper_v3.py`, and
-> `render_overlay.py`) have been moved to `../legacy/overlay_versions/`.
+> These are the original author's raw working notes for the prototype scripts in this
+> folder — see `readme.md` for what's actually current.
 
 ## Overlay
 

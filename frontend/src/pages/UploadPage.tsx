@@ -12,26 +12,28 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
   const [video, setVideo] = useState<File | null>(null)
   const [gpx, setGpx] = useState<File | null>(null)
   const [videoStartTime, setVideoStartTime] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [statusText, setStatusText] = useState('')
+  const [phase, setPhase] = useState<'idle' | 'uploading' | 'extracting'>('idle')
+  const [uploadProgress, setUploadProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
+  const busy = phase !== 'idle'
   const canSubmit = video != null && (sourceType === 'gopro_embedded' || gpx != null) && !busy
 
   const handleSubmit = async () => {
     if (!video) return
-    setBusy(true)
+    setPhase('uploading')
+    setUploadProgress(0)
     setError(null)
     try {
-      setStatusText('Uploading…')
       const { video_id, job_id } = await uploadVideo({
         video,
         sourceType,
         gpx: gpx ?? undefined,
         videoStartTime: videoStartTime ? new Date(videoStartTime).toISOString() : undefined,
+        onProgress: setUploadProgress,
       })
 
-      setStatusText('Extracting telemetry…')
+      setPhase('extracting')
       // poll until the background extraction job finishes
       for (;;) {
         const job = await getJob(job_id)
@@ -43,7 +45,7 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
       onUploaded(video_id, video)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-      setBusy(false)
+      setPhase('idle')
     }
   }
 
@@ -81,8 +83,19 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
 
       {error && <p className="error-text">{error}</p>}
 
+      {phase === 'uploading' && (
+        <div className="progress">
+          <div className="progress__bar">
+            <div className="progress__fill" style={{ width: `${Math.round(uploadProgress * 100)}%` }} />
+          </div>
+          <div className="progress__label">Uploading… {Math.round(uploadProgress * 100)}%</div>
+        </div>
+      )}
+
       <button className="primary-button" disabled={!canSubmit} onClick={handleSubmit}>
-        {busy ? statusText : 'Extract telemetry'}
+        {phase === 'uploading' && 'Uploading…'}
+        {phase === 'extracting' && 'Extracting telemetry…'}
+        {phase === 'idle' && 'Extract telemetry'}
       </button>
     </div>
   )

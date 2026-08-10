@@ -1,4 +1,4 @@
-"""Lap-vs-lap comparison: ported from overlay/lap_timer_v7.py:147-293.
+"""Lap-vs-lap comparison: ported from legacy/overlay/lap_timer_v7.py:147-293.
 
 The original rendered matplotlib PNGs from an interactive `input()` CLI
 loop. Here the same math (local speed maxima/minima = braking/corner points,

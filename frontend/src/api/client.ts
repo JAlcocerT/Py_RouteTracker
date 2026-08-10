@@ -23,6 +23,7 @@ export interface UploadOptions {
   gpx?: File
   videoStartTime?: string
   offsetSec?: number
+  onProgress?: (fraction: number) => void
 }
 
 export async function uploadVideo(opts: UploadOptions): Promise<{ video_id: string; job_id: string; duration_sec: number }> {
@@ -33,8 +34,31 @@ export async function uploadVideo(opts: UploadOptions): Promise<{ video_id: stri
   if (opts.videoStartTime) form.append('video_start_time', opts.videoStartTime)
   if (opts.offsetSec !== undefined) form.append('offset_sec', String(opts.offsetSec))
 
-  const resp = await fetch('/api/videos', { method: 'POST', body: form })
-  return asJson(resp)
+  // fetch() has no upload-progress event, only XHR does (xhr.upload.onprogress) --
+  // needed here since video files can be large enough that "uploading" is a
+  // real, multi-second phase the user shouldn't stare at a blank button for.
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/videos')
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && opts.onProgress) opts.onProgress(e.loaded / e.total)
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText))
+        } catch {
+          reject(new Error('Upload succeeded but the response was not valid JSON'))
+        }
+      } else {
+        reject(new Error(`${xhr.status} ${xhr.statusText}: ${xhr.responseText}`))
+      }
+    }
+    xhr.onerror = () => reject(new Error('Network error during upload'))
+
+    xhr.send(form)
+  })
 }
 
 export async function getVideo(videoId: string): Promise<VideoMeta> {

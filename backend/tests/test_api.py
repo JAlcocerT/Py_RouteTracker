@@ -4,7 +4,7 @@ ffprobe call) is on this path, and that's monkeypatched out here. This
 proves upload -> background extraction -> telemetry -> lap detection -> lap
 comparison work end-to-end; the ffmpeg-dependent render step is exercised
 separately (skipped locally, run for real in the Docker image -- see
-test_video_render.py and webapp/backend/readme.md).
+test_video_render.py and readme.md).
 """
 
 from __future__ import annotations

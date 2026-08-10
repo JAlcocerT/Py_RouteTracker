@@ -1,13 +1,9 @@
-import shutil
-
 import numpy as np
 import pandas as pd
 import pytest
 
 from app.render.hud_layers import RenderConfig
 from app.render.video_render import _remap_lap_indices_to_window, render_hud_frames
-
-HAS_FFMPEG = shutil.which("ffmpeg") is not None
 
 
 def test_remap_lap_indices_to_window_drops_out_of_range_crossings():
@@ -64,8 +60,3 @@ def test_render_hud_frames_empty_df_is_noop(tmp_path):
     total = render_hud_frames(pd.DataFrame(columns=["time"]), [], RenderConfig(), tmp_path)
     assert total == 0
     assert list(tmp_path.glob("*.png")) == []
-
-
-@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed in this environment; exercised in the Docker image instead")
-def test_trim_and_overlay_require_ffmpeg():
-    pytest.skip("placeholder for the Docker-environment integration pass (see webapp/backend/readme.md)")

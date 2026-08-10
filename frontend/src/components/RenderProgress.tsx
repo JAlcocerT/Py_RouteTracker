@@ -36,16 +36,16 @@ export function RenderProgress({ jobId, onDone }: RenderProgressProps) {
     }
   }, [jobId, onDone])
 
-  if (!job) return <div className="render-progress">Starting…</div>
+  if (!job) return <div className="progress">Starting…</div>
 
   const pct = Math.round(job.progress * 100)
 
   return (
-    <div className="render-progress">
-      <div className="render-progress__bar">
-        <div className="render-progress__fill" style={{ width: `${pct}%` }} />
+    <div className="progress">
+      <div className="progress__bar">
+        <div className="progress__fill" style={{ width: `${pct}%` }} />
       </div>
-      <div className="render-progress__label">
+      <div className="progress__label">
         {job.status === 'running' && `Rendering… ${pct}%`}
         {job.status === 'pending' && 'Queued…'}
         {job.status === 'done' && 'Done!'}

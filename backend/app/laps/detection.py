@@ -1,5 +1,5 @@
-"""Lap detection: ported from overlay/lap_timer_v7.py:94-144 and
-overlay/racing_hud_v7.py:195-249 (the two scripts had nearly identical
+"""Lap detection: ported from legacy/overlay/lap_timer_v7.py:94-144 and
+legacy/overlay/racing_hud_v7.py:195-249 (the two scripts had nearly identical
 copies of this logic; this is the merged, parameterized version — the
 `racing_hud_v7` variant additionally annotated every row with its lap
 number and the last completed lap time, which the HUD renderer needs, so

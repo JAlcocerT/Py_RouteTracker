@@ -51,7 +51,7 @@ def overlay_png_sequence(
     frame_pattern: str = "frame_%06d.png",
 ) -> Path:
     """Composites a transparent HUD PNG sequence onto a video via ffmpeg's
-    `overlay` filter. This is the step overlay/racing_hud_v7.py never
+    `overlay` filter. This is the step legacy/overlay/racing_hud_v7.py never
     actually did — it rendered the HUD as a standalone clip and printed an
     ffmpeg command for the user to run by hand."""
     require_binary("ffmpeg")

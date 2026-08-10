@@ -63,7 +63,7 @@ def test_detect_laps_finds_expected_lap_count():
     # detect_laps requires (time - last_crossing) > min_lap_time_s (strict),
     # so the very first sample at t=0 (0 - (-min_lap_time_s) == min_lap_time_s)
     # never qualifies as a crossing candidate -- this is inherited unchanged
-    # from overlay/lap_timer_v7.py's own boundary condition. The first
+    # from legacy/overlay/lap_timer_v7.py's own boundary condition. The first
     # crossing is therefore registered a half-step later, at t=0.5s, giving
     # 4 crossings (~0.5s, 60s, 120s, 180s) and 3 completed lap rows over
     # this 240s / 4-lap synthetic dataset.

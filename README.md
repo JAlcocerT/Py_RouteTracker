@@ -1,18 +1,25 @@
-# Telemetry Overlay Webapp
+<div align="center">
+  <h1>Py_RouteTracker</h1>
+  <h3>Telemetry Overlay Studio — drag in action-cam footage, overlay GPS/G-force HUDs, download.</h3>
+</div>
+
+<div align="center">
+  <a href="https://github.com/JAlcocerT/Py_RouteTracker?tab=AGPL-3.0-1-ov-file">
+    <img alt="Code License" src="https://img.shields.io/badge/License-AGPLv3-blue.svg" />
+  </a>
+  <a href="https://www.python.org/downloads/release/python-3120/">
+    <img alt="Python Version" src="https://img.shields.io/badge/python-3.12-blue.svg" />
+  </a>
+</div>
 
 A local, self-hosted webapp for overlaying GPS/G-force telemetry HUDs onto action-cam
 footage: drag in a video, trim the section you want, pick which telemetry widgets to draw
-(speedometer, lap timer, G-G diagram, minimap, session graph), and download the result.
-
-This replaces the one-off `overlay/racing_hud_v7.py` / `overlay/lap_timer_v7.py` scripts in
-the repo root with a proper upload → configure → render pipeline, and automatically
-composites the HUD onto your real footage (the old scripts only ever rendered a standalone
-HUD clip and printed an `ffmpeg` command for you to run by hand).
+(speedometer, lap timer, G-G diagram, minimap, session graph, lap-vs-lap comparison), and
+download the result — with the HUD automatically composited onto your real footage.
 
 ## Run it
 
 ```sh
-cd webapp
 docker compose up --build
 ```
 
@@ -36,6 +43,26 @@ interface.
   when you have a phone/Garmin/Polar GPX track instead. You can optionally give the video's
   real-world start time to sync the two automatically.
 
-## Development
+## Repo map
 
-See `backend/readme.md` and the frontend's own Vite setup (`frontend/`, `npm run dev`).
+```
+backend/    FastAPI service: telemetry extraction, lap detection, HUD rendering, job queue
+frontend/   React + Vite + TypeScript webapp
+legacy/     Archived prototype scripts (overlay/) and the original Streamlit GPX viewer
+research/   Sample data and exploratory notebooks this project grew out of; not maintained
+```
+
+`backend/` and `frontend/` are the project — see `backend/readme.md` for backend
+development/testing, and run `npm run dev` in `frontend/` for frontend development.
+Everything under `legacy/` and `research/` is historical context, kept for reference but not
+part of the running app.
+
+## Powered thanks to :heart:
+
+[FastAPI](https://github.com/fastapi/fastapi) ·
+[React](https://github.com/facebook/react) ·
+[Leaflet](https://github.com/Leaflet/Leaflet) ·
+[Recharts](https://github.com/recharts/recharts) ·
+[matplotlib](https://github.com/matplotlib/matplotlib) ·
+[gpxpy](https://github.com/tkrajina/gpxpy) ·
+[ffmpeg](https://ffmpeg.org/) · [ExifTool](https://exiftool.org/)

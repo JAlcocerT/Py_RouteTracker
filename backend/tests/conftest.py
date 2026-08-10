@@ -12,23 +12,18 @@ import pytest
 # scope, is what actually lands before that first import.
 os.environ.setdefault("ROUTETRACKER_DATA_DIR", tempfile.mkdtemp(prefix="routetracker_test_data_"))
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
 @pytest.fixture
-def repo_root() -> Path:
-    return REPO_ROOT
-
-
-@pytest.fixture
-def gopro_telemetry_txt(repo_root: Path) -> Path:
-    path = repo_root / "Z_GoPro" / "GX010411_telemetry.txt"
-    assert path.exists(), "expected sample fixture committed in Z_GoPro/"
+def gopro_telemetry_txt() -> Path:
+    path = FIXTURES_DIR / "GX010411_telemetry.txt"
+    assert path.exists(), "expected sample fixture committed in tests/fixtures/"
     return path
 
 
 @pytest.fixture
-def sample_gpx(repo_root: Path) -> Path:
-    path = repo_root / "Data_My_Routes" / "Krakow - Zarki.gpx"
-    assert path.exists(), "expected sample fixture committed in Data_My_Routes/"
+def sample_gpx() -> Path:
+    path = FIXTURES_DIR / "Krakow - Zarki.gpx"
+    assert path.exists(), "expected sample fixture committed in tests/fixtures/"
     return path
