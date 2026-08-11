@@ -121,6 +121,17 @@ security model. Architecture:
   self-render attempt, all at once) can never claim the same job twice. Only render jobs use
   any of this; extraction jobs still go straight through the older `create_job`/`submit`
   (immediate, in-process, unchanged).
+
+  `claim_next` also takes `min_age_seconds`: it excludes jobs newer than that from
+  consideration entirely. `claim_and_prepare_render` passes
+  `settings.self_render_grace_seconds` (`ROUTETRACKER_SELF_RENDER_GRACE_SECONDS`, default
+  15) here -- this is the self-render grace
+  period: a brand-new render is invisible to "claim whatever's next" (both the built-in
+  local worker and any standing remote worker) for that long, so the uploader has a real
+  chance to grab it first via `claim_specific`, which has no such delay and always works
+  immediately. Without this, the local worker's own ~2s poll loop won the race almost every
+  time, which made the self-render UI panel disappear before a human could act on it -- this
+  was caught and fixed after actually watching it happen, not found in review.
 - **`app/render/coordinator.py`**'s `_prepare_claimed_job` is the shared "load telemetry +
   trim + window + write manifest" step both `claim_and_prepare_render` (next-in-queue) and
   `claim_and_prepare_specific_render` (one exact job, for self-render) call after their

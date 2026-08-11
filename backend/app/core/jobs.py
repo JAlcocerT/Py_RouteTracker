@@ -202,18 +202,31 @@ class JobManager:
             claimed = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return self._row_to_record(claimed)
 
-    def claim_next(self, kind: str, worker_id: str) -> JobRecord | None:
+    def claim_next(self, kind: str, worker_id: str, min_age_seconds: float = 0) -> JobRecord | None:
         """Atomically claims the oldest unclaimed `pending` job of `kind`,
         or returns None if there isn't one. Safe to call concurrently from
         multiple workers (local and/or remote) -- the whole
         select-then-update happens under `self._lock`, so two callers can
-        never claim the same job."""
+        never claim the same job.
+
+        `min_age_seconds`, if given, excludes jobs younger than that from
+        consideration -- this is the per-upload self-render grace period
+        (see app.render.coordinator): a brand-new render job is invisible
+        to "claim whatever's next" (the built-in local worker, and any
+        standing remote workers) for a short window, so the uploader has a
+        real chance to claim it themselves first via `claim_specific`
+        (which has no such delay). Without this, the built-in worker's
+        ~2s poll loop wins the race almost every time, making the
+        self-render option effectively unusable.
+        """
         with self._lock, self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE kind = ? AND status = 'pending' AND payload IS NOT NULL "
-                "ORDER BY created_at ASC LIMIT 1",
-                (kind,),
-            ).fetchone()
+            query = "SELECT * FROM jobs WHERE kind = ? AND status = 'pending' AND payload IS NOT NULL"
+            params: list[Any] = [kind]
+            if min_age_seconds > 0:
+                query += " AND created_at <= ?"
+                params.append(_iso_minus_seconds(min_age_seconds))
+            query += " ORDER BY created_at ASC LIMIT 1"
+            row = conn.execute(query, params).fetchone()
             if row is None:
                 return None
             now = _now_iso()

@@ -45,6 +45,12 @@ TOKEN = "test-worker-token-abc123"
 @pytest.fixture(autouse=True)
 def _enable_worker_mode(monkeypatch):
     monkeypatch.setattr(settings, "worker_token", TOKEN)
+    # This file tests claim_next's "next in queue" HTTP surface, not the
+    # self-render grace period itself (that's covered directly and
+    # thoroughly in test_jobs.py) -- zero it out so these tests can claim
+    # immediately after enqueueing, like they did before that grace period
+    # existed.
+    monkeypatch.setattr(settings, "self_render_grace_seconds", 0)
 
 
 def _auth(token: str = TOKEN) -> dict:

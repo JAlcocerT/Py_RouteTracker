@@ -94,9 +94,12 @@ def claim_and_prepare_render(
     worker_id: str,
 ) -> tuple[JobRecord, PreparedRenderJob] | None:
     """Claims the next queued render job (if any) and runs the cheap
-    trim+window prep for it. Returns None if the queue is empty. See
-    `_prepare_claimed_job` for the RenderPrepFailed contract."""
-    job = job_manager.claim_next("render", worker_id)
+    trim+window prep for it. Returns None if the queue is empty (including
+    "the only pending job is still within its self-render grace period" --
+    see `settings.self_render_grace_seconds` and
+    `JobManager.claim_next`'s `min_age_seconds`). See `_prepare_claimed_job`
+    for the RenderPrepFailed contract."""
+    job = job_manager.claim_next("render", worker_id, min_age_seconds=settings.self_render_grace_seconds)
     if job is None:
         return None
     return job, _prepare_claimed_job(job, job_manager, video_store, settings)

@@ -87,6 +87,11 @@ for anything beyond that one job. If you don't bother running the command, the h
 built-in worker just renders it normally instead — whichever side gets there first wins, with
 no risk of double-processing either way.
 
+The homelab deliberately waits **15 seconds** (`ROUTETRACKER_SELF_RENDER_GRACE_SECONDS`)
+before its own built-in worker (or any standing helper) will pick up a *brand-new* render —
+long enough to actually copy the command and paste it somewhere. Claiming your own job with
+its one-time code isn't subject to that wait at all; it works immediately.
+
 ### A standing helper (your own second machine, or someone you trust long-term)
 
 For a machine you want to *always* help out — not just for one render — there's a separate,

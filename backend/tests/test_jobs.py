@@ -250,3 +250,59 @@ def test_claim_specific_not_claimable_before_enqueue(tmp_path):
     manager = JobManager(tmp_path / "jobs.db")
     job_id = manager.create_job("render")  # no enqueue() -- no payload/claim_token yet
     assert manager.claim_specific(job_id, worker_id="self") is None
+
+
+# --- claim_next's self-render grace period ---
+#
+# A brand-new render job must be invisible to "claim whatever's next" (the
+# built-in local worker, and any standing remote workers) for a short
+# window, so the uploader has a real chance to self-render it first via
+# claim_specific. Without this, the ~2s poll loop wins almost every time.
+
+
+def test_claim_next_ignores_brand_new_jobs_when_grace_period_given(tmp_path):
+    manager = JobManager(tmp_path / "jobs.db")
+    job_id = manager.create_job("render")
+    manager.enqueue(job_id, {"video_id": "abc"}, claim_token="tok")
+
+    # min_age_seconds=3600 -> "only consider jobs created over an hour ago"
+    # -- a job created a moment ago must not be claimable yet
+    assert manager.claim_next("render", worker_id="local", min_age_seconds=3600) is None
+    # it must still be sitting there, untouched, for claim_specific
+    assert manager.get_job(job_id).status == "pending"
+
+
+def test_claim_next_claims_jobs_once_old_enough(tmp_path):
+    manager = JobManager(tmp_path / "jobs.db")
+    job_id = manager.create_job("render")
+    manager.enqueue(job_id, {"video_id": "abc"}, claim_token="tok")
+
+    # negative min_age_seconds -> cutoff is in the future -> any
+    # already-created job counts as "old enough", without needing to sleep
+    # for a real grace period to elapse
+    claimed = manager.claim_next("render", worker_id="local", min_age_seconds=-10)
+    assert claimed is not None
+    assert claimed.id == job_id
+
+
+def test_claim_next_default_has_no_grace_period(tmp_path):
+    manager = JobManager(tmp_path / "jobs.db")
+    job_id = manager.create_job("render")
+    manager.enqueue(job_id, {"video_id": "abc"}, claim_token="tok")
+
+    # default (min_age_seconds=0) preserves the original, always-claimable
+    # behavior -- callers that don't care about self-render aren't affected
+    assert manager.claim_next("render", worker_id="local").id == job_id
+
+
+def test_claim_specific_ignores_grace_period_entirely(tmp_path):
+    """The whole point: even while claim_next is refusing to touch a
+    brand-new job, self-render (claim_specific) can grab it immediately."""
+    manager = JobManager(tmp_path / "jobs.db")
+    job_id = manager.create_job("render")
+    manager.enqueue(job_id, {"video_id": "abc"}, claim_token="tok")
+
+    assert manager.claim_next("render", worker_id="local", min_age_seconds=3600) is None
+    claimed = manager.claim_specific(job_id, worker_id="self")
+    assert claimed is not None
+    assert claimed.id == job_id
