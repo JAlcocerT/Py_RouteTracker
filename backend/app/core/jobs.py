@@ -42,6 +42,7 @@ class JobRecord:
     updated_at: str
     payload: dict[str, Any] | None = None
     worker_id: str | None = None
+    claim_token: str | None = None
 
 
 class JobManager:
@@ -76,7 +77,7 @@ class JobManager:
             # Added for the render job queue -- guarded rather than assumed,
             # so an existing jobs.db from before this feature keeps working.
             existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
-            for column in ("payload", "worker_id"):
+            for column in ("payload", "worker_id", "claim_token"):
                 if column not in existing_columns:
                     conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
 
@@ -122,6 +123,7 @@ class JobManager:
             updated_at=row["updated_at"],
             payload=json.loads(row["payload"]) if row["payload"] else None,
             worker_id=row["worker_id"],
+            claim_token=row["claim_token"],
         )
 
     def _set(
@@ -133,6 +135,7 @@ class JobManager:
         result: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
         worker_id: str | None = None,
+        claim_token: str | None = None,
     ) -> None:
         fields, values = [], []
         if status is not None:
@@ -147,6 +150,8 @@ class JobManager:
             fields.append("payload = ?"); values.append(json.dumps(payload))
         if worker_id is not None:
             fields.append("worker_id = ?"); values.append(worker_id)
+        if claim_token is not None:
+            fields.append("claim_token = ?"); values.append(claim_token)
         fields.append("updated_at = ?"); values.append(_now_iso())
         values.append(job_id)
 
@@ -167,12 +172,35 @@ class JobManager:
     def mark_error(self, job_id: str, error: str) -> None:
         self._set(job_id, status="error", error=error)
 
-    def enqueue(self, job_id: str, payload: dict[str, Any]) -> None:
+    def enqueue(self, job_id: str, payload: dict[str, Any], claim_token: str | None = None) -> None:
         """Marks a job as queued/claimable, with the data a worker (local or
         remote) needs to actually execute it. Unlike `submit`, this does NOT
         run anything -- the job sits `pending` until some worker calls
-        `claim_next`."""
-        self._set(job_id, payload=payload)
+        `claim_next` or (given the matching `claim_token`) `claim_specific`.
+        """
+        self._set(job_id, payload=payload, claim_token=claim_token)
+
+    def claim_specific(self, job_id: str, worker_id: str) -> JobRecord | None:
+        """Claims one exact job by id, if it's still `pending` -- None if
+        it's already claimed/done/doesn't exist. Used for job-scoped
+        self-render tokens, where the caller already knows exactly which
+        job it wants (unlike `claim_next`'s "whatever's oldest"). Same
+        atomicity guarantee: the whole select-then-update happens under
+        `self._lock`."""
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE id = ? AND status = 'pending' AND payload IS NOT NULL",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            now = _now_iso()
+            conn.execute(
+                "UPDATE jobs SET status = 'running', worker_id = ?, updated_at = ? WHERE id = ?",
+                (worker_id, now, job_id),
+            )
+            claimed = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return self._row_to_record(claimed)
 
     def claim_next(self, kind: str, worker_id: str) -> JobRecord | None:
         """Atomically claims the oldest unclaimed `pending` job of `kind`,

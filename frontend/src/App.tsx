@@ -7,7 +7,7 @@ import { UploadPage } from './pages/UploadPage'
 type Step =
   | { name: 'upload' }
   | { name: 'configure'; videoId: string; videoFile: File }
-  | { name: 'render'; jobId: string; videoId: string }
+  | { name: 'render'; jobId: string; videoId: string; claimToken: string }
 
 function App() {
   const [step, setStep] = useState<Step>({ name: 'upload' })
@@ -20,11 +20,18 @@ function App() {
         <ConfigurePage
           videoId={step.videoId}
           videoFile={step.videoFile}
-          onRenderStarted={(jobId) => setStep({ name: 'render', jobId, videoId: step.videoId })}
+          onRenderStarted={(jobId, claimToken) => setStep({ name: 'render', jobId, videoId: step.videoId, claimToken })}
         />
       )
     case 'render':
-      return <RenderPage jobId={step.jobId} videoId={step.videoId} onStartOver={() => setStep({ name: 'upload' })} />
+      return (
+        <RenderPage
+          jobId={step.jobId}
+          videoId={step.videoId}
+          claimToken={step.claimToken}
+          onStartOver={() => setStep({ name: 'upload' })}
+        />
+      )
   }
 }
 

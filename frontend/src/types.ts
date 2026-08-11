@@ -43,6 +43,7 @@ export interface JobStatus {
   error: string | null
   result: Record<string, unknown> | null
   worker_id: string | null
+  claim_token: string | null
 }
 
 export interface WidgetSelection {

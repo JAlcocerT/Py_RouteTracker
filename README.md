@@ -66,19 +66,31 @@ Tune this with environment variables on the `routetracker` service in `docker-co
 ## Distributed rendering
 
 Drawing the HUD and compositing it onto your footage is the expensive part of this
-pipeline — on a small or shared homelab box it can be genuinely slow. You can offload that
-work to any other machine you control (another PC, a friend's laptop) instead of relying on
-the homelab alone.
+pipeline — on a small or shared homelab box it can be genuinely slow. You don't have to wait
+on the homelab alone; there are two ways to use other compute, for two different situations.
 
-**How it works:** the homelab always runs a built-in worker, so nothing changes if you don't
-set this up — it just renders everything itself, exactly as before. Turning this on adds
-*more* workers to the same queue; whichever machine is free first (the homelab itself, or a
-remote worker) claims the next render job, does the actual matplotlib/ffmpeg work, and
-uploads the finished video back. The homelab always keeps ownership of uploads, the job
-queue, and downloads — a worker only ever receives the already-trimmed clip for the one job
-it's working on, never your video library.
+### Render your own upload on your own other device (no setup needed)
 
-**Turn it on:**
+While a render is queued, the page shows a ready-to-paste command with a one-time code baked
+in, tied to just that render:
+
+```sh
+docker run --rm ghcr.io/jlleongarcia/py_routetracker:latest \
+  python -m app.worker_main --server <this-webapp's-address> --job <job-id> --token <one-time-code>
+```
+
+Run it on any other machine you have (a gaming PC, a second laptop) and *that device* renders
+*your* video, then the page picks up the finished result exactly as if it had rendered on the
+homelab. Nobody configures anything and nobody shares a secret with anybody else — the code
+is generated fresh per render, shown only to whoever just uploaded that video, and is useless
+for anything beyond that one job. If you don't bother running the command, the homelab's own
+built-in worker just renders it normally instead — whichever side gets there first wins, with
+no risk of double-processing either way.
+
+### A standing helper (your own second machine, or someone you trust long-term)
+
+For a machine you want to *always* help out — not just for one render — there's a separate,
+opt-in shared-secret mechanism:
 
 1. Generate a token: `openssl rand -hex 32`
 2. Set it on the coordinator (the homelab) — e.g. in a `.env` file next to
@@ -93,14 +105,16 @@ it's working on, never your video library.
      --token <your token> --name my-laptop
    ```
 
-   That's the same multi-arch image CI/CD already publishes — no separate build, and it
-   needs no access to the coordinator's files or database; everything it needs arrives over
-   the connection above, into its own temp directory, cleaned up when the job is done.
+Both mechanisms use the same multi-arch image CI/CD already publishes — no separate build —
+and a worker needs no access to the coordinator's files or database; everything it needs
+arrives over the connection above, into its own temp directory, cleaned up when the job is
+done.
 
-**Security note:** this is a shared-secret trust model for you and people you trust, not a
-public service. Anyone holding the token can claim — and briefly receive a copy of — *any*
-pending render on your instance, not just their own. Fine for a homelab and friends; don't
-hand the token to anyone you wouldn't also hand your videos to.
+**Security note:** the standing-helper token is a shared secret for you and people you trust
+long-term, not a public service — anyone holding it can claim, and briefly receive a copy of,
+*any* pending render on your instance, not just their own. The one-time per-render code above
+doesn't have this problem (it only ever unlocks the one job it was generated for), which is
+exactly why it needs no configuration to use.
 
 ## Supported telemetry sources
 

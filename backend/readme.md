@@ -110,20 +110,24 @@ security model. Architecture:
   identically whether called in-process or by a worker that fetched its inputs over HTTP.
   `render_and_composite` is kept as a thin wrapper calling both, for callers (tests, and
   conceptually "a single machine doing everything") that don't care about the split.
-- **`app/core/jobs.py`**'s `jobs` table gained `payload` (the JSON render request) and
-  `worker_id` columns (migrated via a guarded `ALTER TABLE`, not a fresh-schema assumption).
-  `enqueue`/`claim_next`/`requeue_stale` implement a pull-based claim queue -- workers ask
-  for work rather than the coordinator tracking who's available. `claim_next`'s
-  select-then-update happens under the manager's existing lock, so concurrent claimers (the
-  local worker and any number of remote ones) can never claim the same job twice. Only
-  render jobs use this; extraction jobs still go straight through the older
-  `create_job`/`submit` (immediate, in-process, unchanged).
-- **`app/render/coordinator.py`**'s `claim_and_prepare_render` is the shared "claim + prep"
-  step both the local worker and the `/api/worker/jobs/next` route call -- claims a job, loads
-  that video's telemetry, runs `prepare_render_job`, and writes a `telemetry.json` manifest
-  alongside the trimmed clip in `work_dir` (`settings.work_dir / job_id`, a fixed convention
-  so a later, separate HTTP request -- a remote worker fetching inputs -- can find them with
-  no in-memory state to carry over).
+- **`app/core/jobs.py`**'s `jobs` table gained `payload` (the JSON render request),
+  `worker_id`, and `claim_token` columns (migrated via a guarded `ALTER TABLE`, not a
+  fresh-schema assumption). `enqueue`/`claim_next`/`claim_specific`/`requeue_stale`
+  implement a pull-based claim queue -- workers ask for work rather than the coordinator
+  tracking who's available. `claim_next` claims the oldest `pending` job of a kind (used by
+  standing workers); `claim_specific` claims one exact job by id, only if still `pending`
+  (used by job-scoped self-render). Both do their select-then-update under the manager's
+  existing lock, so concurrent claimers (the local worker, any standing remote ones, and a
+  self-render attempt, all at once) can never claim the same job twice. Only render jobs use
+  any of this; extraction jobs still go straight through the older `create_job`/`submit`
+  (immediate, in-process, unchanged).
+- **`app/render/coordinator.py`**'s `_prepare_claimed_job` is the shared "load telemetry +
+  trim + window + write manifest" step both `claim_and_prepare_render` (next-in-queue) and
+  `claim_and_prepare_specific_render` (one exact job, for self-render) call after their
+  respective claim. Writes a `telemetry.json` manifest alongside the trimmed clip in
+  `work_dir` (`settings.work_dir / job_id`, a fixed convention so a later, separate HTTP
+  request -- a worker fetching inputs -- can find them with no in-memory state to carry
+  over).
 - **`app/render/local_worker.py`**'s `LocalRenderWorker` is a background thread (started in
   `main.py`'s lifespan, same pattern as `RetentionSweeper`) that loops
   `claim_and_prepare_render` + `execute_prepared_render` -- this is what makes local-only
@@ -133,22 +137,33 @@ security model. Architecture:
   `StaleRenderJobRequeuer` periodically calls `requeue_stale` so a render claimed by a worker
   that vanished mid-job (closed laptop, network drop) doesn't stay stuck forever --
   `ROUTETRACKER_WORKER_LEASE_MINUTES` (default 30).
-- **`app/api/routes_worker.py`**, prefix `/api/worker`, gated by `require_worker_token` on
-  every route (503 if `ROUTETRACKER_WORKER_TOKEN` is unset, 401 on a wrong/missing bearer
-  token): `GET /jobs/next` (claim), `GET /jobs/{id}/inputs/{video,telemetry}` (fetch),
-  `POST /jobs/{id}/progress`, `POST /jobs/{id}/complete` (multipart upload), `POST
-  /jobs/{id}/fail`.
+- **`app/api/routes_worker.py`**, prefix `/api/worker`, has two auth dependencies:
+  `require_global_worker_token` (the admin's `ROUTETRACKER_WORKER_TOKEN`; 503 if unset, 401
+  on mismatch) guards only `GET /jobs/next` (claim-whatever's-oldest only makes sense for a
+  trusted standing worker). `require_job_access` guards everything else once a job_id is in
+  scope (`POST /jobs/{id}/claim`, `GET /jobs/{id}/inputs/{video,telemetry}`, `POST
+  /jobs/{id}/progress`, `POST /jobs/{id}/complete`, `POST /jobs/{id}/fail`) -- it accepts
+  *either* the global token *or* that specific job's `claim_token`, so the self-render path
+  works even when `ROUTETRACKER_WORKER_TOKEN` is never set at all.
 - **`app/worker_main.py`** (`python -m app.worker_main --server ... --token ...`) is the
-  standalone remote-worker CLI. Deliberately never imports `app.core.config`/`settings` at
-  all -- it's `httpx` calls to the coordinator plus the pure rendering functions above, into
-  its own `tempfile.TemporaryDirectory`. Runs from the same Docker image already published by
-  CI/CD (`docker-multiarch.yml`), just with a different `command:`.
+  standalone worker CLI. Deliberately never imports `app.core.config`/`settings` at all --
+  it's `httpx` calls to the coordinator plus the pure rendering functions above, into its
+  own `tempfile.TemporaryDirectory`. Two modes: the default polling loop (`run_worker`,
+  claims via `/jobs/next`, needs the global token) and `--job <id>` (`run_single_job`, one
+  `POST /jobs/{id}/claim` then exit -- a 409 there means something else already has it,
+  which is a clean no-op, not an error). Runs from the same Docker image already published
+  by CI/CD (`docker-multiarch.yml`), just with a different `command:`.
 
-Tests: `tests/test_jobs.py` covers the claim queue directly (atomicity, kind filtering,
-requeue). `tests/test_video_render.py` covers the prepare/execute split producing equivalent
+Tests: `tests/test_jobs.py` covers both claim paths directly (atomicity, kind filtering,
+requeue, and that `claim_specific` doesn't disturb `claim_next`'s ordering for other queued
+jobs). `tests/test_video_render.py` covers the prepare/execute split producing equivalent
 output to the combined pipeline. `tests/test_routes_worker.py` covers the full worker HTTP
 API using a second, lifespan-free FastAPI app (so `LocalRenderWorker` isn't running in the
-background racing the test's own manual claims) -- auth/feature-flag behavior, and a full
-claim → fetch inputs → report progress → complete round trip. All of the above was also
-manually verified against a real, separate `app.worker_main` process (different CWD, no
-shared environment with the coordinator) claiming and completing a real render over HTTP.
+background racing the test's own manual claims) -- auth/feature-flag behavior for both
+dependencies, cross-job token isolation (job A's token can't touch job B), and two full
+round trips (claim → fetch inputs → report progress → complete): one via the global token,
+one via only a job's own `claim_token` with `ROUTETRACKER_WORKER_TOKEN` unset entirely. Both
+paths were also manually verified against real, separate `app.worker_main` processes
+(different CWD, no shared environment with the coordinator) claiming and completing real
+renders over HTTP -- including confirming a `--job` self-render completes with the
+coordinator's admin token never configured at all.

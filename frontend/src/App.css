@@ -71,6 +71,40 @@ section h2 {
   color: var(--accent);
 }
 
+.self-render {
+  margin-top: 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  max-width: 560px;
+}
+
+.self-render__title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.self-render__command {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+}
+
+.self-render__hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
 /* --- upload page --- */
 
 .source-toggle {

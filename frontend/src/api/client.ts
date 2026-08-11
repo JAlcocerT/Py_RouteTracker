@@ -104,7 +104,7 @@ export async function startRender(
   trimEnd: number,
   widgets: WidgetSelection,
   style: RenderStyle,
-): Promise<{ job_id: string }> {
+): Promise<{ job_id: string; claim_token: string }> {
   const resp = await fetch(`/api/videos/${videoId}/render`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

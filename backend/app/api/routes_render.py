@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -43,10 +44,11 @@ async def start_render(video_id: str, body: RenderRequest):
 
     # The actual render (trim + HUD frames + composite) doesn't happen here
     # -- this just queues it. Whoever claims it (the always-running
-    # LocalRenderWorker by default, or a remote worker -- see
-    # app.render.local_worker / app.worker_main / app.api.routes_worker)
-    # does the work and reports back through the same job_id, so polling
-    # /api/jobs/{id} looks identical regardless of who rendered it.
+    # LocalRenderWorker by default, a remote worker with the global
+    # ROUTETRACKER_WORKER_TOKEN, or -- via claim_token below -- the
+    # uploader's own other device) does the work and reports back through
+    # the same job_id, so polling /api/jobs/{id} looks identical regardless
+    # of who rendered it.
     job_id = job_manager.create_job("render")
     payload = {
         "video_id": video_id,
@@ -55,9 +57,15 @@ async def start_render(video_id: str, body: RenderRequest):
         "widgets": body.widgets.model_dump(),
         "style": body.style.model_dump(),
     }
+    # A one-time credential scoped to exactly this job -- lets the uploader
+    # run `app.worker_main --job <id> --token <claim_token>` on their own
+    # other device to render this specific video, with no server-side
+    # configuration (no ROUTETRACKER_WORKER_TOKEN needed) and nothing to
+    # share with anyone else. See app.api.routes_worker.require_job_access.
+    claim_token = secrets.token_urlsafe(24)
     video_store.update(video_id, render_job_ids=[*meta.render_job_ids, job_id])
-    job_manager.enqueue(job_id, payload)
-    return {"job_id": job_id}
+    job_manager.enqueue(job_id, payload, claim_token=claim_token)
+    return {"job_id": job_id, "claim_token": claim_token}
 
 
 @router.get("/render/{job_id}/download")

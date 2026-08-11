@@ -206,3 +206,107 @@ def test_inputs_404_for_job_that_was_never_claimed():
 def test_progress_404_for_unknown_job():
     resp = client.post("/api/worker/jobs/does-not-exist/progress", json={"progress": 0.5}, headers=_auth())
     assert resp.status_code == 404
+
+
+# --- job-scoped claim_token (per-upload self-render, no admin token needed) ---
+
+
+def _claim_token_for(job_id: str) -> str:
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["claim_token"], "expected a claim_token on a freshly-queued render job"
+    return job["claim_token"]
+
+
+def test_job_claim_token_works_with_no_global_token_configured(monkeypatch, uploaded_and_queued_render):
+    _video_id, job_id = uploaded_and_queued_render
+    token = _claim_token_for(job_id)
+
+    # the whole point: this must work even though distributed rendering
+    # (the admin-configured shared secret) was never turned on
+    monkeypatch.setattr(settings, "worker_token", "")
+
+    resp = client.post(f"/api/worker/jobs/{job_id}/claim", headers=_auth(token))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["job_id"] == job_id
+
+
+def test_job_claim_token_does_not_grant_access_to_a_different_job(uploaded_and_queued_render, monkeypatch, sample_gpx, tmp_path):
+    _video_id_a, job_id_a = uploaded_and_queued_render
+    token_a = _claim_token_for(job_id_a)
+
+    # a second, independent queued render
+    monkeypatch.setattr(routes_videos, "get_video_duration", lambda path: 120.0)
+    gpx_points = load_gpx_points(sample_gpx)
+    video_start_time = gpx_points["timestamp"].iloc[0] - timedelta(seconds=5)
+    with open(sample_gpx, "rb") as gpx_file:
+        upload_resp = client.post(
+            "/api/videos",
+            files={"video": ("clip2.mp4", _test_video_bytes(tmp_path), "video/mp4"), "gpx": ("track.gpx", gpx_file.read(), "application/gpx+xml")},
+            data={"source_type": "external_gpx", "video_start_time": video_start_time.isoformat()},
+        )
+    video_id_b = upload_resp.json()["video_id"]
+    extraction_job_b = upload_resp.json()["job_id"]
+    deadline = time.time() + 10
+    while time.time() < deadline and client.get(f"/api/jobs/{extraction_job_b}").json()["status"] != "done":
+        time.sleep(0.05)
+    render_resp_b = client.post(f"/api/videos/{video_id_b}/render", json={"trim_start": 0.0, "trim_end": 10.0})
+    job_id_b = render_resp_b.json()["job_id"]
+
+    # job A's token must not unlock job B's endpoints
+    resp = client.post(f"/api/worker/jobs/{job_id_b}/claim", headers=_auth(token_a))
+    assert resp.status_code == 401
+    resp2 = client.get(f"/api/worker/jobs/{job_id_b}/inputs/video", headers=_auth(token_a))
+    assert resp2.status_code == 401
+
+
+def test_claim_specific_job_endpoint_409_once_already_claimed(uploaded_and_queued_render):
+    _video_id, job_id = uploaded_and_queued_render
+    token = _claim_token_for(job_id)
+
+    first = client.post(f"/api/worker/jobs/{job_id}/claim", headers=_auth(token))
+    assert first.status_code == 200
+
+    second = client.post(f"/api/worker/jobs/{job_id}/claim", headers=_auth(token))
+    assert second.status_code == 409
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed in this environment")
+def test_full_self_render_round_trip_using_only_the_job_token(monkeypatch, uploaded_and_queued_render, tmp_path):
+    """The scenario the feature exists for: the uploader's own other
+    device renders their own upload, with no admin-configured secret
+    involved at any point."""
+    video_id, job_id = uploaded_and_queued_render
+    token = _claim_token_for(job_id)
+    monkeypatch.setattr(settings, "worker_token", "")
+
+    claim_resp = client.post(f"/api/worker/jobs/{job_id}/claim", headers=_auth(token))
+    assert claim_resp.status_code == 200, claim_resp.text
+
+    video_resp = client.get(f"/api/worker/jobs/{job_id}/inputs/video", headers=_auth(token))
+    assert video_resp.status_code == 200
+    assert len(video_resp.content) > 1000
+
+    telemetry_resp = client.get(f"/api/worker/jobs/{job_id}/inputs/telemetry", headers=_auth(token))
+    assert telemetry_resp.status_code == 200
+    assert len(telemetry_resp.json()["points"]) > 0
+
+    progress_resp = client.post(f"/api/worker/jobs/{job_id}/progress", json={"progress": 0.7}, headers=_auth(token))
+    assert progress_resp.status_code == 200
+
+    fake_output = tmp_path / "self_render_output.mp4"
+    fake_output.write_bytes(video_resp.content)
+    with open(fake_output, "rb") as f:
+        complete_resp = client.post(
+            f"/api/worker/jobs/{job_id}/complete",
+            files={"file": ("output.mp4", f, "video/mp4")},
+            headers=_auth(token),
+        )
+    assert complete_resp.status_code == 200, complete_resp.text
+
+    final_status = client.get(f"/api/jobs/{job_id}").json()
+    assert final_status["status"] == "done"
+    assert final_status["worker_id"] == "self"
+    assert final_status["result"]["video_id"] == video_id
+
+    download_resp = client.get(f"/api/render/{job_id}/download")
+    assert download_resp.status_code == 200

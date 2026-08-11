@@ -48,23 +48,16 @@ def write_telemetry_manifest(prepared: PreparedRenderJob) -> Path:
     return manifest_path
 
 
-def claim_and_prepare_render(
-    job_manager: JobManager,
-    video_store: VideoStore,
-    settings: Settings,
-    worker_id: str,
-) -> tuple[JobRecord, PreparedRenderJob] | None:
-    """Claims the next queued render job (if any) and runs the cheap
-    trim+window prep for it. Returns None if the queue is empty.
+def _prepare_claimed_job(job: JobRecord, job_manager: JobManager, video_store: VideoStore, settings: Settings) -> PreparedRenderJob:
+    """Runs the prep step for an already-claimed job (loads its telemetry,
+    trims the video, windows the telemetry, writes the manifest). Shared by
+    both claim paths below -- claiming is the only part that differs
+    between "next in queue" and "this specific job".
 
-    Raises RenderPrepFailed (after already marking the job `error`) if a
-    job was claimed but its video is no longer available -- callers should
-    catch this and try claiming again rather than treating it as "empty".
+    Raises RenderPrepFailed (after already marking the job `error`) if the
+    job's video is no longer available -- callers should catch this and
+    treat it as "we did handle a job", not "nothing to do".
     """
-    job = job_manager.claim_next("render", worker_id)
-    if job is None:
-        return None
-
     video_id = job.payload["video_id"]
     meta = video_store.get(video_id)
     if meta is None:
@@ -91,4 +84,35 @@ def claim_and_prepare_render(
         raise RenderPrepFailed(job.id) from exc
 
     write_telemetry_manifest(prepared)
-    return job, prepared
+    return prepared
+
+
+def claim_and_prepare_render(
+    job_manager: JobManager,
+    video_store: VideoStore,
+    settings: Settings,
+    worker_id: str,
+) -> tuple[JobRecord, PreparedRenderJob] | None:
+    """Claims the next queued render job (if any) and runs the cheap
+    trim+window prep for it. Returns None if the queue is empty. See
+    `_prepare_claimed_job` for the RenderPrepFailed contract."""
+    job = job_manager.claim_next("render", worker_id)
+    if job is None:
+        return None
+    return job, _prepare_claimed_job(job, job_manager, video_store, settings)
+
+
+def claim_and_prepare_specific_render(
+    job_manager: JobManager,
+    video_store: VideoStore,
+    settings: Settings,
+    job_id: str,
+    worker_id: str,
+) -> tuple[JobRecord, PreparedRenderJob] | None:
+    """Claims one exact job (used for job-scoped self-render tokens --
+    see app.api.routes_worker's /jobs/{id}/claim). Returns None if it's not
+    available to claim (already claimed/done/doesn't exist)."""
+    job = job_manager.claim_specific(job_id, worker_id)
+    if job is None:
+        return None
+    return job, _prepare_claimed_job(job, job_manager, video_store, settings)

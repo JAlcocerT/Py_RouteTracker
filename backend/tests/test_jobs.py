@@ -193,3 +193,60 @@ def test_requeue_stale_leaves_recently_updated_jobs_alone(tmp_path):
     job = manager.get_job(job_id)
     assert job.status == "running"
     assert job.worker_id == "active-worker"
+
+
+# --- job-scoped claim (claim_specific), for per-upload self-render tokens ---
+
+
+def test_claim_specific_claims_the_requested_job(tmp_path):
+    manager = JobManager(tmp_path / "jobs.db")
+    job_id = manager.create_job("render")
+    manager.enqueue(job_id, {"video_id": "abc"}, claim_token="secret-for-this-job")
+
+    claimed = manager.claim_specific(job_id, worker_id="self")
+
+    assert claimed is not None
+    assert claimed.id == job_id
+    assert claimed.status == "running"
+    assert claimed.worker_id == "self"
+    assert claimed.claim_token == "secret-for-this-job"
+
+
+def test_claim_specific_returns_none_for_unknown_job(tmp_path):
+    manager = JobManager(tmp_path / "jobs.db")
+    assert manager.claim_specific("does-not-exist", worker_id="self") is None
+
+
+def test_claim_specific_returns_none_once_already_claimed(tmp_path):
+    manager = JobManager(tmp_path / "jobs.db")
+    job_id = manager.create_job("render")
+    manager.enqueue(job_id, {"video_id": "abc"}, claim_token="tok")
+
+    first = manager.claim_specific(job_id, worker_id="self")
+    second = manager.claim_specific(job_id, worker_id="someone-else")
+
+    assert first is not None
+    assert second is None
+
+
+def test_claim_specific_does_not_disturb_other_queued_jobs(tmp_path):
+    manager = JobManager(tmp_path / "jobs.db")
+    older_id = manager.create_job("render")
+    manager.enqueue(older_id, {"video_id": "older"}, claim_token="tok-older")
+    time.sleep(0.01)
+    newer_id = manager.create_job("render")
+    manager.enqueue(newer_id, {"video_id": "newer"}, claim_token="tok-newer")
+
+    # claim the NEWER job specifically -- claim_next's "oldest first" must
+    # not be affected, and the older job must remain claimable afterward
+    claimed = manager.claim_specific(newer_id, worker_id="self")
+    assert claimed.id == newer_id
+
+    still_pending = manager.claim_next("render", worker_id="local")
+    assert still_pending.id == older_id
+
+
+def test_claim_specific_not_claimable_before_enqueue(tmp_path):
+    manager = JobManager(tmp_path / "jobs.db")
+    job_id = manager.create_job("render")  # no enqueue() -- no payload/claim_token yet
+    assert manager.claim_specific(job_id, worker_id="self") is None

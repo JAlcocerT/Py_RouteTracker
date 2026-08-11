@@ -10,7 +10,7 @@ import type { LapRow, RenderStyle, TelemetryPoint, VideoMeta, WidgetSelection } 
 interface ConfigurePageProps {
   videoId: string
   videoFile: File
-  onRenderStarted: (jobId: string) => void
+  onRenderStarted: (jobId: string, claimToken: string) => void
 }
 
 const DEFAULT_WIDGETS: WidgetSelection = { speedo: true, gg: true, minimap: true, session_graph: true }
@@ -79,8 +79,8 @@ export function ConfigurePage({ videoId, videoFile, onRenderStarted }: Configure
     setSubmitting(true)
     setError(null)
     try {
-      const { job_id } = await startRender(videoId, trimStart, trimEnd, widgets, style)
-      onRenderStarted(job_id)
+      const { job_id, claim_token } = await startRender(videoId, trimStart, trimEnd, widgets, style)
+      onRenderStarted(job_id, claim_token)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setSubmitting(false)

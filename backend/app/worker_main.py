@@ -8,13 +8,22 @@ directly. Deliberately standalone: never touches app.core.config's
 needs comes from the coordinator over the wire, into its own temp dir.
 
 Usage:
+    # Standing worker: polls forever, can claim ANY pending render on the
+    # coordinator. Needs the coordinator's ROUTETRACKER_WORKER_TOKEN.
     python -m app.worker_main --server http://<coordinator-host>:7000 --token <token>
 
+    # One-shot self-render: claims and renders exactly ONE job (the copy-
+    # paste command shown in the webapp while your own upload is queued),
+    # then exits. Needs no server configuration at all -- the token here is
+    # that one job's own claim_token, not the admin's shared secret.
+    python -m app.worker_main --server http://<coordinator-host>:7000 --job <job-id> --token <claim-token>
+
 See backend/readme.md's "Distributed rendering" section for setup and the
-security model (short version: the token is a shared secret -- anyone
-holding it can claim, and briefly receive, any pending render on that
-coordinator; only run this pointed at a coordinator you trust, with a token
-you control).
+security model (short version: a standing worker's token is a shared
+secret -- anyone holding it can claim, and briefly receive, any pending
+render on that coordinator; only run one pointed at a coordinator you
+trust. A one-shot --job token is scoped to a single job and typically
+generated for, and used by, the same person, so there's nothing to share).
 """
 
 from __future__ import annotations
@@ -142,11 +151,49 @@ def run_worker(server: str, token: str, name: str, poll_interval: float, max_ren
                 pass
 
 
+def run_single_job(server: str, token: str, job_id: str, name: str, max_render_workers: int) -> int:
+    """Claims and renders exactly one job, then returns -- for the
+    per-upload self-render command shown in the webapp. Returns a process
+    exit code (0 for success, including the "someone/something else beat
+    us to it" case, which isn't an error)."""
+    client = httpx.Client(
+        base_url=server.rstrip("/"),
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=httpx.Timeout(30.0, read=120.0),
+    )
+    _log(name, f"claiming job {job_id} on {server}")
+
+    resp = client.post(f"/api/worker/jobs/{job_id}/claim")
+    if resp.status_code == 409:
+        _log(name, "this job is no longer available -- it's probably already rendering (or finished) elsewhere. Nothing to do.")
+        return 0
+    if resp.status_code in (401, 503):
+        _log(name, f"coordinator rejected us: {resp.status_code} {resp.text} -- check --token")
+        return 1
+    resp.raise_for_status()
+    job = resp.json()
+
+    _log(name, f"claimed job {job_id}, rendering...")
+    try:
+        _process_job(client, job, max_render_workers)
+    except Exception as exc:  # noqa: BLE001 - report back to the coordinator either way
+        _log(name, f"job {job_id} failed: {exc}")
+        try:
+            client.post(f"/api/worker/jobs/{job_id}/fail", json={"error": str(exc)})
+        except httpx.HTTPError:
+            pass
+        return 1
+
+    _log(name, f"job {job_id} complete -- check the webapp to download it")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--server", required=True, help="Coordinator base URL, e.g. http://100.x.x.x:7000")
-    parser.add_argument("--token", default=os.environ.get("ROUTETRACKER_WORKER_TOKEN", ""), help="Must match the coordinator's ROUTETRACKER_WORKER_TOKEN (or set that env var instead)")
-    parser.add_argument("--name", default=socket.gethostname(), help="Identifies this worker in logs/job history (default: hostname)")
+    parser.add_argument("--token", default=os.environ.get("ROUTETRACKER_WORKER_TOKEN", ""), help="A standing worker's shared secret (or that env var), OR a single job's claim_token when used with --job")
+    parser.add_argument("--job", dest="job_id", default=None, help="Render only this specific job (the copy-paste command from the webapp), then exit, instead of polling forever for any job")
+    parser.add_argument("--name", default=socket.gethostname(), help="Identifies this worker in logs/job history (default: hostname; ignored in --job mode, which is always labeled 'self')")
     parser.add_argument("--poll-interval", type=float, default=5.0, help="Seconds between polls when idle (default: 5)")
     parser.add_argument("--max-render-workers", type=int, default=_DEFAULT_MAX_RENDER_WORKERS, help=f"Frame-render parallelism on this machine (default: {_DEFAULT_MAX_RENDER_WORKERS})")
     args = parser.parse_args(argv)
@@ -160,6 +207,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    if args.job_id:
+        return run_single_job(args.server, args.token, args.job_id, args.name, args.max_render_workers)
 
     try:
         run_worker(args.server, args.token, args.name, args.poll_interval, args.max_render_workers)
