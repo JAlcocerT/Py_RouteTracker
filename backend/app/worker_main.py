@@ -116,7 +116,14 @@ def run_worker(server: str, token: str, name: str, poll_interval: float, max_ren
     client = httpx.Client(
         base_url=server.rstrip("/"),
         headers={"Authorization": f"Bearer {token}"},
-        timeout=httpx.Timeout(30.0, read=120.0),
+        # Claiming a job runs the coordinator's prepare step synchronously
+        # before it responds (trim via ffmpeg re-encode + telemetry
+        # windowing) -- on modest/shared or ARM homelab hardware (this
+        # project explicitly supports Raspberry Pi -- see root README) that
+        # can genuinely take minutes for a real clip, not seconds. A short
+        # read timeout here doesn't make anything safer, it just turns a
+        # slow-but-working coordinator into a spurious ReadTimeout.
+        timeout=httpx.Timeout(30.0, read=1800.0),
     )
     _log(name, f"polling {server} every {poll_interval}s (max_render_workers={max_render_workers})")
 
@@ -159,7 +166,14 @@ def run_single_job(server: str, token: str, job_id: str, name: str, max_render_w
     client = httpx.Client(
         base_url=server.rstrip("/"),
         headers={"Authorization": f"Bearer {token}"},
-        timeout=httpx.Timeout(30.0, read=120.0),
+        # Claiming a job runs the coordinator's prepare step synchronously
+        # before it responds (trim via ffmpeg re-encode + telemetry
+        # windowing) -- on modest/shared or ARM homelab hardware (this
+        # project explicitly supports Raspberry Pi -- see root README) that
+        # can genuinely take minutes for a real clip, not seconds. A short
+        # read timeout here doesn't make anything safer, it just turns a
+        # slow-but-working coordinator into a spurious ReadTimeout.
+        timeout=httpx.Timeout(30.0, read=1800.0),
     )
     _log(name, f"claiming job {job_id} on {server}")
 

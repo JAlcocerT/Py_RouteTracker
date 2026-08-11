@@ -17,19 +17,48 @@ function formatExpiry(expiresAt: string): string {
   return `${time} (about ${minutesLeft} min from now)`
 }
 
+function copyText(text: string): boolean {
+  // navigator.clipboard only exists in "secure contexts" (HTTPS or
+  // localhost) -- accessing this app over plain http:// (e.g. its Tailscale
+  // IP, which is exactly how this is meant to be reached from another
+  // device) means navigator.clipboard is undefined entirely, not just
+  // permission-denied, so calling it throws synchronously. execCommand is
+  // deprecated but is the only copy mechanism that still works in that
+  // situation, so it's used as a fallback rather than the only path.
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => {})
+    return true
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  let ok = false
+  try {
+    ok = document.execCommand('copy')
+  } catch {
+    ok = false
+  }
+  document.body.removeChild(textarea)
+  return ok
+}
+
 function SelfRenderSnippet({ jobId, claimToken, released }: { jobId: string; claimToken: string; released: boolean }) {
   const [copied, setCopied] = useState(false)
+  const [copyFailed, setCopyFailed] = useState(false)
   const [releasing, setReleasing] = useState(false)
   const command = `docker run --rm ghcr.io/jlleongarcia/py_routetracker:latest \\\n  python -m app.worker_main --server ${window.location.origin} --job ${jobId} --token ${claimToken}`
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(command)
+  const copy = () => {
+    if (copyText(command)) {
+      setCopyFailed(false)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // clipboard access can be blocked (e.g. no HTTPS, permissions) -- the
-      // text is still visible and selectable, just not auto-copied
+    } else {
+      setCopyFailed(true)
     }
   }
 
@@ -57,6 +86,11 @@ function SelfRenderSnippet({ jobId, claimToken, released }: { jobId: string; cla
       <button className="secondary-button" onClick={copy}>
         {copied ? 'Copied!' : 'Copy command'}
       </button>
+      {copyFailed && (
+        <p className="self-render__hint">
+          Couldn't copy automatically — select the text above and copy it by hand instead.
+        </p>
+      )}
       <p className="self-render__hint">
         Needs Docker on that device. This waits for you either way — nothing renders until you decide.
       </p>
