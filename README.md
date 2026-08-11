@@ -83,14 +83,13 @@ Run it on any other machine you have (a gaming PC, a second laptop) and *that de
 *your* video, then the page picks up the finished result exactly as if it had rendered on the
 homelab. Nobody configures anything and nobody shares a secret with anybody else — the code
 is generated fresh per render, shown only to whoever just uploaded that video, and is useless
-for anything beyond that one job. If you don't bother running the command, the homelab's own
-built-in worker just renders it normally instead — whichever side gets there first wins, with
-no risk of double-processing either way.
+for anything beyond that one job.
 
-The homelab deliberately waits **15 seconds** (`ROUTETRACKER_SELF_RENDER_GRACE_SECONDS`)
-before its own built-in worker (or any standing helper) will pick up a *brand-new* render —
-long enough to actually copy the command and paste it somewhere. Claiming your own job with
-its one-time code isn't subject to that wait at all; it works immediately.
+Nothing renders automatically. While a render is queued, the page just waits — for as long as
+it takes — until you decide: either run the command above, or click **"Render on the server
+instead"** right there in the UI. Neither the homelab's own built-in worker nor any standing
+helper will touch a fresh render until one of those happens; there's no countdown or timeout
+that silently claims it for you.
 
 ### A standing helper (your own second machine, or someone you trust long-term)
 

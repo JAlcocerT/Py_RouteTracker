@@ -43,6 +43,7 @@ class JobRecord:
     payload: dict[str, Any] | None = None
     worker_id: str | None = None
     claim_token: str | None = None
+    released: bool = False
 
 
 class JobManager:
@@ -80,6 +81,12 @@ class JobManager:
             for column in ("payload", "worker_id", "claim_token"):
                 if column not in existing_columns:
                     conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
+            # Whether a render job has been explicitly released for general
+            # claiming (see `release()`/`claim_next`) -- separate from
+            # `claim_token`, which lets the uploader claim *their own* job
+            # any time regardless of this flag.
+            if "released" not in existing_columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN released INTEGER NOT NULL DEFAULT 0")
 
     def create_job(self, kind: str) -> str:
         job_id = str(uuid.uuid4())
@@ -124,6 +131,7 @@ class JobManager:
             payload=json.loads(row["payload"]) if row["payload"] else None,
             worker_id=row["worker_id"],
             claim_token=row["claim_token"],
+            released=bool(row["released"]),
         )
 
     def _set(
@@ -180,6 +188,20 @@ class JobManager:
         """
         self._set(job_id, payload=payload, claim_token=claim_token)
 
+    def release(self, job_id: str) -> bool:
+        """Marks a job as released for general claiming by `claim_next` --
+        the explicit "no, just render this on the server" decision (see
+        POST /api/jobs/{id}/release). Returns False if the job doesn't
+        exist. Safe to call on a job that's already been claimed/finished;
+        it just has no effect there, since `claim_next` only ever looks at
+        `pending` jobs anyway."""
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE jobs SET released = 1, updated_at = ? WHERE id = ?",
+                (_now_iso(), job_id),
+            )
+            return cur.rowcount > 0
+
     def claim_specific(self, job_id: str, worker_id: str) -> JobRecord | None:
         """Claims one exact job by id, if it's still `pending` -- None if
         it's already claimed/done/doesn't exist. Used for job-scoped
@@ -202,31 +224,31 @@ class JobManager:
             claimed = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return self._row_to_record(claimed)
 
-    def claim_next(self, kind: str, worker_id: str, min_age_seconds: float = 0) -> JobRecord | None:
-        """Atomically claims the oldest unclaimed `pending` job of `kind`,
-        or returns None if there isn't one. Safe to call concurrently from
-        multiple workers (local and/or remote) -- the whole
-        select-then-update happens under `self._lock`, so two callers can
-        never claim the same job.
+    def claim_next(self, kind: str, worker_id: str) -> JobRecord | None:
+        """Atomically claims the oldest unclaimed, *released* `pending` job
+        of `kind`, or returns None if there isn't one. Safe to call
+        concurrently from multiple workers (local and/or remote) -- the
+        whole select-then-update happens under `self._lock`, so two callers
+        can never claim the same job.
 
-        `min_age_seconds`, if given, excludes jobs younger than that from
-        consideration -- this is the per-upload self-render grace period
-        (see app.render.coordinator): a brand-new render job is invisible
-        to "claim whatever's next" (the built-in local worker, and any
-        standing remote workers) for a short window, so the uploader has a
-        real chance to claim it themselves first via `claim_specific`
-        (which has no such delay). Without this, the built-in worker's
-        ~2s poll loop wins the race almost every time, making the
-        self-render option effectively unusable.
+        Only `released` jobs are eligible here (see `release()`) -- a
+        brand-new render job (see app.render.coordinator) is invisible to
+        "claim whatever's next" (the built-in local worker, and any
+        standing remote workers) until the uploader explicitly decides:
+        either claim it themselves via `claim_specific` (self-render, using
+        the per-job token shown in the UI -- no release needed), or click
+        "render on the server" (which calls `release()`). There's no
+        timeout here -- an earlier version auto-released jobs after a fixed
+        grace period, which meant the built-in worker could silently start
+        rendering before the uploader had actually decided anything; this
+        waits indefinitely for an explicit choice instead.
         """
         with self._lock, self._connect() as conn:
-            query = "SELECT * FROM jobs WHERE kind = ? AND status = 'pending' AND payload IS NOT NULL"
-            params: list[Any] = [kind]
-            if min_age_seconds > 0:
-                query += " AND created_at <= ?"
-                params.append(_iso_minus_seconds(min_age_seconds))
-            query += " ORDER BY created_at ASC LIMIT 1"
-            row = conn.execute(query, params).fetchone()
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE kind = ? AND status = 'pending' AND payload IS NOT NULL "
+                "AND released = 1 ORDER BY created_at ASC LIMIT 1",
+                (kind,),
+            ).fetchone()
             if row is None:
                 return None
             now = _now_iso()

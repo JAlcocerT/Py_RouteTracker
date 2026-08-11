@@ -44,6 +44,7 @@ export interface JobStatus {
   result: Record<string, unknown> | null
   worker_id: string | null
   claim_token: string | null
+  released: boolean
 }
 
 export interface WidgetSelection {

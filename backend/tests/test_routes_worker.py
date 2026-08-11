@@ -45,12 +45,6 @@ TOKEN = "test-worker-token-abc123"
 @pytest.fixture(autouse=True)
 def _enable_worker_mode(monkeypatch):
     monkeypatch.setattr(settings, "worker_token", TOKEN)
-    # This file tests claim_next's "next in queue" HTTP surface, not the
-    # self-render grace period itself (that's covered directly and
-    # thoroughly in test_jobs.py) -- zero it out so these tests can claim
-    # immediately after enqueueing, like they did before that grace period
-    # existed.
-    monkeypatch.setattr(settings, "self_render_grace_seconds", 0)
 
 
 def _auth(token: str = TOKEN) -> dict:
@@ -73,7 +67,14 @@ def _test_video_bytes(tmp_path: Path) -> bytes:
 def uploaded_and_queued_render(monkeypatch, sample_gpx, tmp_path):
     """Uploads a video, waits for extraction, and enqueues a render --
     returns (video_id, job_id) with the render job left `pending` (nothing
-    claims it in this test app, since LocalRenderWorker isn't running)."""
+    claims it in this test app, since LocalRenderWorker isn't running).
+
+    Also releases the job (the explicit "render on the server" decision --
+    see JobManager.release) so `claim_next`/`GET /jobs/next` can see it,
+    since this file mostly exercises that HTTP surface rather than the
+    release gate itself (that's covered directly in test_jobs.py). The
+    job-scoped claim_token tests below don't need this at all -- claim_specific
+    ignores the released flag entirely."""
     monkeypatch.setattr(routes_videos, "get_video_duration", lambda path: 120.0)
 
     gpx_points = load_gpx_points(sample_gpx)
@@ -106,7 +107,10 @@ def uploaded_and_queued_render(monkeypatch, sample_gpx, tmp_path):
         json={"trim_start": 0.0, "trim_end": 20.0, "widgets": {"speedo": True, "gg": False, "minimap": False, "session_graph": False}},
     )
     assert render_resp.status_code == 200, render_resp.text
-    return video_id, render_resp.json()["job_id"]
+    job_id = render_resp.json()["job_id"]
+    release_resp = client.post(f"/api/jobs/{job_id}/release")
+    assert release_resp.status_code == 200, release_resp.text
+    return video_id, job_id
 
 
 # --- auth / feature-flag behavior ---

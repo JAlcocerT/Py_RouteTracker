@@ -19,7 +19,7 @@ import pandas as pd
 
 from app.core.binaries import require_binary
 from app.core.ffmpeg_utils import get_video_duration  # re-exported for callers that only import this module
-from app.telemetry.resample import resample_to_grid
+from app.telemetry.resample import resample_to_grid, smooth_speed_outliers
 from app.telemetry.sources.base import TelemetryResult, empty_result
 
 __all__ = [
@@ -95,10 +95,15 @@ def parse_gps_data(txt_content: str, duration_sec: float) -> pd.DataFrame:
 
     df = pd.DataFrame(data)
     df[["lat", "lon"]] = df[["lat", "lon"]].ffill().bfill()
+    # Assign time from the *original* sample count (one exiftool line per
+    # native GPS interval) before dropping (0,0) "no fix yet" rows -- doing
+    # it after would compress the remaining samples' time axis, since
+    # linspace assumes even spacing across however many rows are left.
+    df["time"] = np.linspace(0, duration_sec, len(df))
+    df["speed"] = smooth_speed_outliers(df["speed"])
     df = df[(df["lat"] != 0) & (df["lon"] != 0)].reset_index(drop=True)
     if len(df) < 2:
         return pd.DataFrame(columns=["time", "lat", "lon", "speed"])
-    df["time"] = np.linspace(0, duration_sec, len(df))
     return df[["time", "lat", "lon", "speed"]]
 
 

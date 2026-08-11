@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from app.laps.detection import haversine_distance_m
-from app.telemetry.resample import resample_to_grid
+from app.telemetry.resample import resample_to_grid, smooth_speed_outliers
 from app.telemetry.sources.base import TelemetryResult, empty_result
 
 
@@ -45,7 +45,14 @@ def load_gpx_points(gpx_path: Path) -> pd.DataFrame:
 
 def compute_speed_kmh(df: pd.DataFrame) -> pd.Series:
     """Derives speed from consecutive GPX points (most consumer GPX files
-    don't carry a <speed> extension, so this is computed, not read)."""
+    don't carry a <speed> extension, so this is computed, not read).
+
+    Position-delta speed is much noisier than a GPS chip's own reported
+    speed: ordinary receiver jitter (a few meters) divided by a small time
+    delta between fixes can look like a huge instantaneous speed, so this
+    is smoothed the same way as the other sources -- see
+    `smooth_speed_outliers`.
+    """
     lat = df["lat"].to_numpy()
     lon = df["lon"].to_numpy()
     seconds = df["timestamp"].apply(lambda t: t.timestamp()).to_numpy()
@@ -57,7 +64,7 @@ def compute_speed_kmh(df: pd.DataFrame) -> pd.Series:
 
     speed_ms = dist_m / dt
     speed_ms = np.nan_to_num(speed_ms, nan=0.0)
-    return pd.Series(speed_ms * 3.6, index=df.index)
+    return smooth_speed_outliers(pd.Series(speed_ms * 3.6, index=df.index))
 
 
 class ExternalGpxSource:

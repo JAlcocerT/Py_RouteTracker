@@ -93,6 +93,7 @@ def test_enqueue_then_claim_next_round_trip(tmp_path):
     manager = JobManager(tmp_path / "jobs.db")
     job_id = manager.create_job("render")
     manager.enqueue(job_id, {"video_id": "abc", "trim_start": 0.0, "trim_end": 20.0})
+    manager.release(job_id)
 
     claimed = manager.claim_next("render", worker_id="friend-laptop")
 
@@ -107,6 +108,7 @@ def test_claim_next_never_returns_the_same_job_twice(tmp_path):
     manager = JobManager(tmp_path / "jobs.db")
     job_id = manager.create_job("render")
     manager.enqueue(job_id, {"video_id": "abc"})
+    manager.release(job_id)
 
     first = manager.claim_next("render", worker_id="worker-a")
     second = manager.claim_next("render", worker_id="worker-b")
@@ -119,6 +121,7 @@ def test_claim_next_only_matches_requested_kind(tmp_path):
     manager = JobManager(tmp_path / "jobs.db")
     extract_id = manager.create_job("extract_telemetry")
     manager.enqueue(extract_id, {"whatever": True})
+    manager.release(extract_id)
 
     assert manager.claim_next("render", worker_id="local") is None
 
@@ -127,9 +130,11 @@ def test_claim_next_returns_oldest_queued_job_first(tmp_path):
     manager = JobManager(tmp_path / "jobs.db")
     first_id = manager.create_job("render")
     manager.enqueue(first_id, {"n": 1})
+    manager.release(first_id)
     time.sleep(0.01)
     second_id = manager.create_job("render")
     manager.enqueue(second_id, {"n": 2})
+    manager.release(second_id)
 
     claimed = manager.claim_next("render", worker_id="local")
     assert claimed.id == first_id
@@ -139,6 +144,7 @@ def test_update_progress_mark_done_mark_error(tmp_path):
     manager = JobManager(tmp_path / "jobs.db")
     job_id = manager.create_job("render")
     manager.enqueue(job_id, {"video_id": "abc"})
+    manager.release(job_id)
     manager.claim_next("render", worker_id="local")
 
     manager.update_progress(job_id, 0.42)
@@ -155,6 +161,7 @@ def test_mark_error(tmp_path):
     manager = JobManager(tmp_path / "jobs.db")
     job_id = manager.create_job("render")
     manager.enqueue(job_id, {"video_id": "abc"})
+    manager.release(job_id)
     manager.claim_next("render", worker_id="local")
 
     manager.mark_error(job_id, "worker disconnected")
@@ -167,6 +174,7 @@ def test_requeue_stale_resets_a_silent_claimed_job(tmp_path):
     manager = JobManager(tmp_path / "jobs.db")
     job_id = manager.create_job("render")
     manager.enqueue(job_id, {"video_id": "abc"})
+    manager.release(job_id)
     manager.claim_next("render", worker_id="vanished-worker")
 
     # negative lease -> cutoff is in the future -> any claimed job (even one
@@ -177,7 +185,8 @@ def test_requeue_stale_resets_a_silent_claimed_job(tmp_path):
     job = manager.get_job(job_id)
     assert job.status == "pending"
     assert job.worker_id is None
-    # requeued jobs must still be claimable again
+    # requeued jobs must still be claimable again -- requeue doesn't reset
+    # `released`, since the uploader already made their decision once
     assert manager.claim_next("render", worker_id="another-worker").id == job_id
 
 
@@ -185,6 +194,7 @@ def test_requeue_stale_leaves_recently_updated_jobs_alone(tmp_path):
     manager = JobManager(tmp_path / "jobs.db")
     job_id = manager.create_job("render")
     manager.enqueue(job_id, {"video_id": "abc"})
+    manager.release(job_id)
     manager.claim_next("render", worker_id="active-worker")
 
     reset_count = manager.requeue_stale("render", lease_seconds=3600)
@@ -242,6 +252,7 @@ def test_claim_specific_does_not_disturb_other_queued_jobs(tmp_path):
     claimed = manager.claim_specific(newer_id, worker_id="self")
     assert claimed.id == newer_id
 
+    manager.release(older_id)
     still_pending = manager.claim_next("render", worker_id="local")
     assert still_pending.id == older_id
 
@@ -252,57 +263,55 @@ def test_claim_specific_not_claimable_before_enqueue(tmp_path):
     assert manager.claim_specific(job_id, worker_id="self") is None
 
 
-# --- claim_next's self-render grace period ---
+# --- release() / claim_next's `released` requirement ---
 #
-# A brand-new render job must be invisible to "claim whatever's next" (the
-# built-in local worker, and any standing remote workers) for a short
-# window, so the uploader has a real chance to self-render it first via
-# claim_specific. Without this, the ~2s poll loop wins almost every time.
+# A freshly enqueued render job must be invisible to "claim whatever's
+# next" (the built-in local worker, and any standing remote workers) until
+# the uploader explicitly decides: self-render it (claim_specific, via the
+# per-job token -- no release needed) or release it for the server to pick
+# up. There's no timeout of any kind -- an earlier version auto-released
+# jobs after a fixed grace period, which meant the built-in worker's own
+# ~2s poll loop could silently start rendering before a human had actually
+# decided anything.
 
 
-def test_claim_next_ignores_brand_new_jobs_when_grace_period_given(tmp_path):
+def test_claim_next_ignores_unreleased_jobs(tmp_path):
     manager = JobManager(tmp_path / "jobs.db")
     job_id = manager.create_job("render")
     manager.enqueue(job_id, {"video_id": "abc"}, claim_token="tok")
 
-    # min_age_seconds=3600 -> "only consider jobs created over an hour ago"
-    # -- a job created a moment ago must not be claimable yet
-    assert manager.claim_next("render", worker_id="local", min_age_seconds=3600) is None
+    assert manager.claim_next("render", worker_id="local") is None
     # it must still be sitting there, untouched, for claim_specific
     assert manager.get_job(job_id).status == "pending"
 
 
-def test_claim_next_claims_jobs_once_old_enough(tmp_path):
+def test_release_makes_a_job_claimable(tmp_path):
     manager = JobManager(tmp_path / "jobs.db")
     job_id = manager.create_job("render")
     manager.enqueue(job_id, {"video_id": "abc"}, claim_token="tok")
 
-    # negative min_age_seconds -> cutoff is in the future -> any
-    # already-created job counts as "old enough", without needing to sleep
-    # for a real grace period to elapse
-    claimed = manager.claim_next("render", worker_id="local", min_age_seconds=-10)
+    assert manager.release(job_id) is True
+    assert manager.get_job(job_id).released is True
+
+    claimed = manager.claim_next("render", worker_id="local")
     assert claimed is not None
     assert claimed.id == job_id
 
 
-def test_claim_next_default_has_no_grace_period(tmp_path):
+def test_release_returns_false_for_unknown_job(tmp_path):
+    manager = JobManager(tmp_path / "jobs.db")
+    assert manager.release("does-not-exist") is False
+
+
+def test_claim_specific_ignores_released_flag_entirely(tmp_path):
+    """The whole point: even while claim_next is refusing to touch an
+    unreleased job, self-render (claim_specific) can grab it immediately,
+    with no release step needed at all."""
     manager = JobManager(tmp_path / "jobs.db")
     job_id = manager.create_job("render")
     manager.enqueue(job_id, {"video_id": "abc"}, claim_token="tok")
 
-    # default (min_age_seconds=0) preserves the original, always-claimable
-    # behavior -- callers that don't care about self-render aren't affected
-    assert manager.claim_next("render", worker_id="local").id == job_id
-
-
-def test_claim_specific_ignores_grace_period_entirely(tmp_path):
-    """The whole point: even while claim_next is refusing to touch a
-    brand-new job, self-render (claim_specific) can grab it immediately."""
-    manager = JobManager(tmp_path / "jobs.db")
-    job_id = manager.create_job("render")
-    manager.enqueue(job_id, {"video_id": "abc"}, claim_token="tok")
-
-    assert manager.claim_next("render", worker_id="local", min_age_seconds=3600) is None
+    assert manager.claim_next("render", worker_id="local") is None
     claimed = manager.claim_specific(job_id, worker_id="self")
     assert claimed is not None
     assert claimed.id == job_id

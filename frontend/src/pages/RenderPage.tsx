@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { downloadUrl, getVideo } from '../api/client'
+import { downloadUrl, getVideo, releaseJob } from '../api/client'
 import { RenderProgress } from '../components/RenderProgress'
 import type { JobStatus } from '../types'
 
@@ -17,8 +17,9 @@ function formatExpiry(expiresAt: string): string {
   return `${time} (about ${minutesLeft} min from now)`
 }
 
-function SelfRenderSnippet({ jobId, claimToken }: { jobId: string; claimToken: string }) {
+function SelfRenderSnippet({ jobId, claimToken, released }: { jobId: string; claimToken: string; released: boolean }) {
   const [copied, setCopied] = useState(false)
+  const [releasing, setReleasing] = useState(false)
   const command = `docker run --rm ghcr.io/jlleongarcia/py_routetracker:latest \\\n  python -m app.worker_main --server ${window.location.origin} --job ${jobId} --token ${claimToken}`
 
   const copy = async () => {
@@ -32,6 +33,23 @@ function SelfRenderSnippet({ jobId, claimToken }: { jobId: string; claimToken: s
     }
   }
 
+  const renderOnServer = async () => {
+    setReleasing(true)
+    try {
+      await releaseJob(jobId)
+    } catch {
+      setReleasing(false)
+    }
+  }
+
+  if (released) {
+    return (
+      <div className="self-render">
+        <p className="self-render__hint">Waiting for the server to pick this up — it'll start shortly.</p>
+      </div>
+    )
+  }
+
   return (
     <div className="self-render">
       <p className="self-render__title">Want this to render faster? Run it on your own device:</p>
@@ -40,8 +58,11 @@ function SelfRenderSnippet({ jobId, claimToken }: { jobId: string; claimToken: s
         {copied ? 'Copied!' : 'Copy command'}
       </button>
       <p className="self-render__hint">
-        Needs Docker on that device. If you don't run this, it'll render on the server automatically — just maybe slower.
+        Needs Docker on that device. This waits for you either way — nothing renders until you decide.
       </p>
+      <button className="secondary-button" onClick={renderOnServer} disabled={releasing}>
+        {releasing ? 'Starting…' : 'Render on the server instead'}
+      </button>
     </div>
   )
 }
@@ -72,7 +93,9 @@ export function RenderPage({ jobId, videoId, claimToken, onStartOver }: RenderPa
 
       <RenderProgress jobId={jobId} onDone={setFinished} onUpdate={setStatus} />
 
-      {status?.status === 'pending' && <SelfRenderSnippet jobId={jobId} claimToken={claimToken} />}
+      {status?.status === 'pending' && (
+        <SelfRenderSnippet jobId={jobId} claimToken={claimToken} released={status.released} />
+      )}
 
       {finished?.status === 'done' && (
         <>

@@ -111,27 +111,30 @@ security model. Architecture:
   `render_and_composite` is kept as a thin wrapper calling both, for callers (tests, and
   conceptually "a single machine doing everything") that don't care about the split.
 - **`app/core/jobs.py`**'s `jobs` table gained `payload` (the JSON render request),
-  `worker_id`, and `claim_token` columns (migrated via a guarded `ALTER TABLE`, not a
-  fresh-schema assumption). `enqueue`/`claim_next`/`claim_specific`/`requeue_stale`
-  implement a pull-based claim queue -- workers ask for work rather than the coordinator
-  tracking who's available. `claim_next` claims the oldest `pending` job of a kind (used by
-  standing workers); `claim_specific` claims one exact job by id, only if still `pending`
-  (used by job-scoped self-render). Both do their select-then-update under the manager's
-  existing lock, so concurrent claimers (the local worker, any standing remote ones, and a
-  self-render attempt, all at once) can never claim the same job twice. Only render jobs use
-  any of this; extraction jobs still go straight through the older `create_job`/`submit`
-  (immediate, in-process, unchanged).
+  `worker_id`, `claim_token`, and `released` columns (migrated via a guarded `ALTER TABLE`,
+  not a fresh-schema assumption). `enqueue`/`claim_next`/`claim_specific`/`release`/
+  `requeue_stale` implement a pull-based claim queue -- workers ask for work rather than the
+  coordinator tracking who's available. `claim_next` claims the oldest `pending`, *released*
+  job of a kind (used by standing workers, and the built-in local worker); `claim_specific`
+  claims one exact job by id, only if still `pending` -- ignoring `released` entirely (used
+  by job-scoped self-render). Both do their select-then-update under the manager's existing
+  lock, so concurrent claimers (the local worker, any standing remote ones, and a self-render
+  attempt, all at once) can never claim the same job twice. Only render jobs use any of this;
+  extraction jobs still go straight through the older `create_job`/`submit` (immediate,
+  in-process, unchanged).
 
-  `claim_next` also takes `min_age_seconds`: it excludes jobs newer than that from
-  consideration entirely. `claim_and_prepare_render` passes
-  `settings.self_render_grace_seconds` (`ROUTETRACKER_SELF_RENDER_GRACE_SECONDS`, default
-  15) here -- this is the self-render grace
-  period: a brand-new render is invisible to "claim whatever's next" (both the built-in
-  local worker and any standing remote worker) for that long, so the uploader has a real
-  chance to grab it first via `claim_specific`, which has no such delay and always works
-  immediately. Without this, the local worker's own ~2s poll loop won the race almost every
-  time, which made the self-render UI panel disappear before a human could act on it -- this
-  was caught and fixed after actually watching it happen, not found in review.
+  A freshly enqueued render job starts with `released = 0` -- invisible to `claim_next`
+  (neither the built-in local worker nor any standing remote worker will touch it) until
+  either the uploader self-renders it via `claim_specific` (no release needed, works
+  immediately), or explicitly calls `release()` (see `POST /api/jobs/{id}/release` in
+  `routes_jobs.py`, wired to the "Render on the server instead" button in the UI). There is
+  no timeout of any kind here -- an earlier version auto-released jobs after a fixed grace
+  period (`ROUTETRACKER_SELF_RENDER_GRACE_SECONDS`), which meant the local worker's own ~2s
+  poll loop could silently start rendering before a human had actually decided anything; this
+  was replaced with waiting indefinitely for an explicit decision after watching that
+  countdown confuse exactly the person it was meant to help. `requeue_stale` does not reset
+  `released` -- a job that already got explicitly released and then lost its worker (crash,
+  network drop) goes back to being claimable without asking the uploader to decide again.
 - **`app/render/coordinator.py`**'s `_prepare_claimed_job` is the shared "load telemetry +
   trim + window + write manifest" step both `claim_and_prepare_render` (next-in-queue) and
   `claim_and_prepare_specific_render` (one exact job, for self-render) call after their
@@ -166,8 +169,10 @@ security model. Architecture:
   by CI/CD (`docker-multiarch.yml`), just with a different `command:`.
 
 Tests: `tests/test_jobs.py` covers both claim paths directly (atomicity, kind filtering,
-requeue, and that `claim_specific` doesn't disturb `claim_next`'s ordering for other queued
-jobs). `tests/test_video_render.py` covers the prepare/execute split producing equivalent
+requeue, that `claim_specific` doesn't disturb `claim_next`'s ordering for other queued jobs,
+that `claim_next` ignores unreleased jobs while `claim_specific` ignores `released` entirely,
+and that `release()` is what makes a job visible to `claim_next`).
+`tests/test_video_render.py` covers the prepare/execute split producing equivalent
 output to the combined pipeline. `tests/test_routes_worker.py` covers the full worker HTTP
 API using a second, lifespan-free FastAPI app (so `LocalRenderWorker` isn't running in the
 background racing the test's own manual claims) -- auth/feature-flag behavior for both

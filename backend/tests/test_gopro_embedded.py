@@ -35,7 +35,10 @@ def test_parse_gps_data_against_real_exiftool_dump(gopro_telemetry_txt):
     assert list(df.columns) == ["time", "lat", "lon", "speed"]
     # speeds were converted from m/s to km/h (source file starts near-stationary)
     assert df["speed"].min() >= 0
-    assert df["speed"].max() < 300  # sanity ceiling, not a real karting top speed
+    # this fixture is a real go-kart session, genuine top speed ~85 km/h --
+    # a much tighter ceiling than before is exactly the point: a wide "< 300"
+    # ceiling let an unsmoothed single-sample GPS spike through unnoticed
+    assert df["speed"].max() < 100
     assert df["time"].is_monotonic_increasing
     assert df["time"].max() == pytest.approx(533.0)
     # real GoPro coordinates from the fixture (~37.558N, ~-5.932W)

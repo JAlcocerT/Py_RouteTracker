@@ -35,19 +35,8 @@ def _run_app_lifespan():
     # retention sweeper / the stale-job requeuer never start, and any
     # render job posted here would sit "pending" forever with nothing
     # claiming it.
-    #
-    # Also zero out the self-render grace period for this module: these
-    # tests exercise the built-in local worker claiming jobs normally, not
-    # the grace period itself (that's covered directly in test_jobs.py) --
-    # without this, LocalRenderWorker would sit out the full default grace
-    # window (15s) before claiming anything, needlessly slowing the suite.
-    # pytest.MonkeyPatch (not the function-scoped `monkeypatch` fixture) is
-    # what lets this live at module scope.
-    mp = pytest.MonkeyPatch()
-    mp.setattr(settings, "self_render_grace_seconds", 0)
     with client:
         yield
-    mp.undo()
 
 
 def _test_video_bytes(tmp_path: Path) -> bytes:
@@ -160,6 +149,11 @@ def test_render_job_lifecycle(uploaded_video):
     )
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["job_id"]
+    # a freshly-queued render waits for an explicit decision (self-render
+    # or release) before any worker -- including the built-in local one --
+    # will touch it; see app.core.jobs.JobManager.release
+    release_resp = client.post(f"/api/jobs/{job_id}/release")
+    assert release_resp.status_code == 200, release_resp.text
 
     job = _wait_for_job(job_id, timeout=60.0)
 

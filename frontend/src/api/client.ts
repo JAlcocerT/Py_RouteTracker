@@ -116,3 +116,7 @@ export async function startRender(
 export function downloadUrl(jobId: string): string {
   return `/api/render/${jobId}/download`
 }
+
+export async function releaseJob(jobId: string): Promise<void> {
+  await asJson(await fetch(`/api/jobs/${jobId}/release`, { method: 'POST' }))
+}

@@ -30,4 +30,22 @@ async def get_job(job_id: str):
         # UUIDs are already the only access control that exists), so
         # exposing it here doesn't change the security posture.
         "claim_token": job.claim_token,
+        # Whether this job has been released for general claiming (see
+        # POST /jobs/{id}/release) -- a still-pending, unreleased render job
+        # is waiting on the uploader's explicit decision (self-render vs.
+        # "render on the server"), not stuck.
+        "released": job.released,
     }
+
+
+@router.post("/{job_id}/release")
+async def release_job(job_id: str):
+    """The uploader's explicit "no, just render this on the server"
+    decision -- makes the job eligible for `claim_next` (the built-in
+    local worker, or any standing remote worker). Doesn't render anything
+    itself; some worker still has to actually poll and claim it, same as
+    always. See app.core.jobs.JobManager.release."""
+    if job_manager.get_job(job_id) is None:
+        raise HTTPException(404, "job not found")
+    job_manager.release(job_id)
+    return {"ok": True}

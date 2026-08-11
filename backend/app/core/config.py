@@ -40,15 +40,6 @@ class Settings:
         self.worker_token = os.environ.get("ROUTETRACKER_WORKER_TOKEN", "").strip()
         self.worker_lease_minutes = float(os.environ.get("ROUTETRACKER_WORKER_LEASE_MINUTES", "30"))
 
-        # How long a freshly-queued render job is held back from "claim
-        # whatever's next" (the built-in local worker, and any standing
-        # remote workers) so the uploader has a real chance to self-render
-        # it first via the per-job claim_token shown in the UI -- see
-        # app.core.jobs.JobManager.claim_next's min_age_seconds. Without
-        # this, the local worker's own ~2s poll loop wins that race almost
-        # every time, since no human can copy-paste a command that fast.
-        self.self_render_grace_seconds = float(os.environ.get("ROUTETRACKER_SELF_RENDER_GRACE_SECONDS", "15"))
-
         for d in (self.upload_dir, self.cache_dir, self.output_dir, self.work_dir):
             d.mkdir(parents=True, exist_ok=True)
 
