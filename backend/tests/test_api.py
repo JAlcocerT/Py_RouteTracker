@@ -28,6 +28,17 @@ HAS_FFMPEG = shutil.which("ffmpeg") is not None
 client = TestClient(app)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _run_app_lifespan():
+    # TestClient only runs FastAPI's lifespan (startup/shutdown) when used
+    # as a context manager -- without this, LocalRenderWorker / the
+    # retention sweeper / the stale-job requeuer never start, and any
+    # render job posted here would sit "pending" forever with nothing
+    # claiming it.
+    with client:
+        yield
+
+
 def _test_video_bytes(tmp_path: Path) -> bytes:
     """A real (if trivial) mp4 when ffmpeg is on PATH, so the render/trim/
     overlay path gets exercised for real -- not just the extraction path,

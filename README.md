@@ -63,6 +63,45 @@ Tune this with environment variables on the `routetracker` service in `docker-co
 - `ROUTETRACKER_RETENTION_MINUTES` (default `60`) — how long a video/render is kept.
 - `ROUTETRACKER_SWEEP_INTERVAL_SECONDS` (default `300`) — how often the cleanup pass runs.
 
+## Distributed rendering
+
+Drawing the HUD and compositing it onto your footage is the expensive part of this
+pipeline — on a small or shared homelab box it can be genuinely slow. You can offload that
+work to any other machine you control (another PC, a friend's laptop) instead of relying on
+the homelab alone.
+
+**How it works:** the homelab always runs a built-in worker, so nothing changes if you don't
+set this up — it just renders everything itself, exactly as before. Turning this on adds
+*more* workers to the same queue; whichever machine is free first (the homelab itself, or a
+remote worker) claims the next render job, does the actual matplotlib/ffmpeg work, and
+uploads the finished video back. The homelab always keeps ownership of uploads, the job
+queue, and downloads — a worker only ever receives the already-trimmed clip for the one job
+it's working on, never your video library.
+
+**Turn it on:**
+
+1. Generate a token: `openssl rand -hex 32`
+2. Set it on the coordinator (the homelab) — e.g. in a `.env` file next to
+   `docker-compose.yml`: `ROUTETRACKER_WORKER_TOKEN=<your token>`, then `docker compose up
+   --build` (or restart it, if it's already running).
+3. On the other machine, run a worker pointed at the coordinator — its Tailscale address
+   works well here (see the Tailscale section above):
+
+   ```sh
+   docker run --rm ghcr.io/jlleongarcia/py_routetracker:latest \
+     python -m app.worker_main --server http://<coordinator-tailscale-ip>:7000 \
+     --token <your token> --name my-laptop
+   ```
+
+   That's the same multi-arch image CI/CD already publishes — no separate build, and it
+   needs no access to the coordinator's files or database; everything it needs arrives over
+   the connection above, into its own temp directory, cleaned up when the job is done.
+
+**Security note:** this is a shared-secret trust model for you and people you trust, not a
+public service. Anyone holding the token can claim — and briefly receive a copy of — *any*
+pending render on your instance, not just their own. Fine for a homelab and friends; don't
+hand the token to anyone you wouldn't also hand your videos to.
+
 ## Supported telemetry sources
 
 - **GoPro embedded GPS** — reads the camera's own embedded GPS/accelerometer metadata

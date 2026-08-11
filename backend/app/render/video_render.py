@@ -123,6 +123,93 @@ class RenderResult:
     frame_count: int
 
 
+@dataclass
+class PreparedRenderJob:
+    """The output of the cheap, coordinator-side half of a render: a
+    trimmed clip + the small windowed telemetry slice needed to draw the
+    HUD over it. This is the natural hand-off point for a distributed
+    worker (see app.render.local_worker / app.worker_main) -- it's
+    everything `execute_prepared_render` needs and nothing more, so a
+    remote worker only ever has to transfer this (typically short) trimmed
+    clip and a small JSON telemetry payload, never the full, potentially
+    multi-GB, original upload."""
+
+    trimmed_video_path: Path
+    windowed_telemetry: pd.DataFrame
+    lap_indices: list[int]
+    fps: float
+    work_dir: Path
+
+
+def prepare_render_job(
+    source_video: Path,
+    annotated_telemetry: pd.DataFrame,
+    lap_indices: list[int],
+    trim_start: float,
+    trim_end: float,
+    work_dir: Path,
+) -> PreparedRenderJob:
+    """The cheap half of a render: trim the source video and window the
+    telemetry to the requested [trim_start, trim_end] range. Always runs on
+    the coordinator (it has the original upload; a worker never needs to).
+
+    `annotated_telemetry` must be sampled on a uniform time grid (see
+    app.telemetry.resample.resample_to_grid) and, if lap widgets are
+    enabled, annotated by app.laps.detection.detect_laps.
+    """
+    work_dir.mkdir(parents=True, exist_ok=True)
+    trimmed_path = work_dir / "trimmed.mp4"
+    trim_video(source_video, trim_start, trim_end, trimmed_path)
+
+    window = annotated_telemetry[
+        (annotated_telemetry["time"] >= trim_start) & (annotated_telemetry["time"] <= trim_end)
+    ].copy()
+    window["time"] = window["time"] - trim_start
+    window = window.reset_index(drop=True)
+
+    windowed_lap_indices = _remap_lap_indices_to_window(annotated_telemetry, lap_indices, trim_start, window)
+    fps = 1 / window["time"].diff().median() if len(window) > 1 else 30.0
+
+    return PreparedRenderJob(
+        trimmed_video_path=trimmed_path,
+        windowed_telemetry=window,
+        lap_indices=windowed_lap_indices,
+        fps=fps,
+        work_dir=work_dir,
+    )
+
+
+def execute_prepared_render(
+    prepared: PreparedRenderJob,
+    config: RenderConfig,
+    output_path: Path,
+    n_workers: int | None = None,
+    on_progress: ProgressCallback | None = None,
+) -> RenderResult:
+    """The expensive half of a render: draw the HUD frames in parallel and
+    composite them onto the already-trimmed clip. This is the part that
+    gets distributed -- runs identically whether called locally
+    (app.render.local_worker) or from a remote worker process
+    (app.worker_main) that downloaded `prepared`'s inputs over HTTP."""
+    frames_dir = prepared.work_dir / "hud_frames"
+
+    def report(fraction: float) -> None:
+        if on_progress:
+            on_progress(max(0.0, min(1.0, fraction)))
+
+    report(0.0)
+    render_hud_frames(
+        prepared.windowed_telemetry, prepared.lap_indices, config, frames_dir,
+        n_workers=n_workers, on_progress=lambda f: report(0.9 * f),
+    )
+    report(0.9)
+
+    overlay_png_sequence(prepared.trimmed_video_path, frames_dir, prepared.fps, output_path)
+    report(1.0)
+
+    return RenderResult(output_path=output_path, frame_count=len(prepared.windowed_telemetry))
+
+
 def render_and_composite(
     source_video: Path,
     annotated_telemetry: pd.DataFrame,
@@ -135,41 +222,20 @@ def render_and_composite(
     n_workers: int | None = None,
     on_progress: ProgressCallback | None = None,
 ) -> RenderResult:
-    """End-to-end: trim source video -> window telemetry -> render HUD
-    frames in parallel -> composite onto the trimmed footage.
-
-    `annotated_telemetry` must be sampled on a uniform time grid (see
-    app.telemetry.resample.resample_to_grid) and, if lap widgets are
-    enabled, annotated by app.laps.detection.detect_laps.
-    """
-    work_dir.mkdir(parents=True, exist_ok=True)
-    frames_dir = work_dir / "hud_frames"
-    trimmed_path = work_dir / "trimmed.mp4"
+    """The full, single-machine pipeline: `prepare_render_job` then
+    `execute_prepared_render` back to back. Kept as a convenience wrapper
+    -- callers that don't care about distributing the work (tests, the
+    local worker) can use this one function exactly as before."""
 
     def report(fraction: float) -> None:
         if on_progress:
             on_progress(max(0.0, min(1.0, fraction)))
 
     report(0.0)
-    trim_video(source_video, trim_start, trim_end, trimmed_path)
+    prepared = prepare_render_job(source_video, annotated_telemetry, lap_indices, trim_start, trim_end, work_dir)
     report(0.1)
 
-    window = annotated_telemetry[
-        (annotated_telemetry["time"] >= trim_start) & (annotated_telemetry["time"] <= trim_end)
-    ].copy()
-    window["time"] = window["time"] - trim_start
-    window = window.reset_index(drop=True)
-
-    windowed_lap_indices = _remap_lap_indices_to_window(annotated_telemetry, lap_indices, trim_start, window)
-
-    def render_progress(frac: float) -> None:
-        report(0.1 + 0.75 * frac)
-
-    render_hud_frames(window, windowed_lap_indices, config, frames_dir, n_workers=n_workers, on_progress=render_progress)
-    report(0.85)
-
-    fps = 1 / window["time"].diff().median() if len(window) > 1 else 30.0
-    overlay_png_sequence(trimmed_path, frames_dir, fps, output_path)
-    report(1.0)
-
-    return RenderResult(output_path=output_path, frame_count=len(window))
+    return execute_prepared_render(
+        prepared, config, output_path, n_workers=n_workers,
+        on_progress=lambda f: report(0.1 + 0.9 * f),
+    )

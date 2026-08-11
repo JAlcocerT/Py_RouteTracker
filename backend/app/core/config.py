@@ -31,6 +31,15 @@ class Settings:
         self.retention_minutes = float(os.environ.get("ROUTETRACKER_RETENTION_MINUTES", "60"))
         self.sweep_interval_seconds = float(os.environ.get("ROUTETRACKER_SWEEP_INTERVAL_SECONDS", "300"))
 
+        # Distributed rendering (app.api.routes_worker, app.worker_main) is
+        # off by default -- an empty token disables the whole /api/worker
+        # surface (503s), since a shared-secret worker token that's easy to
+        # forget to set would otherwise mean "anyone who can reach this
+        # server can claim any pending render." Generate one with e.g.
+        # `openssl rand -hex 32`.
+        self.worker_token = os.environ.get("ROUTETRACKER_WORKER_TOKEN", "").strip()
+        self.worker_lease_minutes = float(os.environ.get("ROUTETRACKER_WORKER_LEASE_MINUTES", "30"))
+
         for d in (self.upload_dir, self.cache_dir, self.output_dir, self.work_dir):
             d.mkdir(parents=True, exist_ok=True)
 

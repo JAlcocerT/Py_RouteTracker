@@ -6,6 +6,13 @@ job functions (each job function is free to spawn its own multiprocessing
 pool, e.g. for parallel HUD-frame rendering -- see app.render.video_render),
 and job status is mirrored into a small SQLite table so it survives a
 backend restart.
+
+Render jobs additionally go through a pull-based claim queue (`enqueue` /
+`claim_next` / `requeue_stale`) so they can be picked up either by the
+built-in local worker (app.render.local_worker) or a remote one (see
+app.worker_main and app.api.routes_worker) -- see the "Distributed render
+workers" plan for the full design. Extraction jobs don't use this; they
+still go straight through `submit`, unchanged.
 """
 
 from __future__ import annotations
@@ -33,6 +40,8 @@ class JobRecord:
     result: dict[str, Any] | None
     created_at: str
     updated_at: str
+    payload: dict[str, Any] | None = None
+    worker_id: str | None = None
 
 
 class JobManager:
@@ -64,6 +73,12 @@ class JobManager:
                 )
                 """
             )
+            # Added for the render job queue -- guarded rather than assumed,
+            # so an existing jobs.db from before this feature keeps working.
+            existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+            for column in ("payload", "worker_id"):
+                if column not in existing_columns:
+                    conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
 
     def create_job(self, kind: str) -> str:
         job_id = str(uuid.uuid4())
@@ -93,6 +108,9 @@ class JobManager:
             row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if row is None:
             return None
+        return self._row_to_record(row)
+
+    def _row_to_record(self, row: sqlite3.Row) -> JobRecord:
         return JobRecord(
             id=row["id"],
             kind=row["kind"],
@@ -102,6 +120,8 @@ class JobManager:
             result=json.loads(row["result"]) if row["result"] else None,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            payload=json.loads(row["payload"]) if row["payload"] else None,
+            worker_id=row["worker_id"],
         )
 
     def _set(
@@ -111,6 +131,8 @@ class JobManager:
         progress: float | None = None,
         error: str | None = None,
         result: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        worker_id: str | None = None,
     ) -> None:
         fields, values = [], []
         if status is not None:
@@ -121,13 +143,80 @@ class JobManager:
             fields.append("error = ?"); values.append(error)
         if result is not None:
             fields.append("result = ?"); values.append(json.dumps(result))
+        if payload is not None:
+            fields.append("payload = ?"); values.append(json.dumps(payload))
+        if worker_id is not None:
+            fields.append("worker_id = ?"); values.append(worker_id)
         fields.append("updated_at = ?"); values.append(_now_iso())
         values.append(job_id)
 
         with self._lock, self._connect() as conn:
             conn.execute(f"UPDATE jobs SET {', '.join(fields)} WHERE id = ?", values)
 
+    def update_progress(self, job_id: str, progress: float) -> None:
+        """Public counterpart to the private progress-reporting `submit()`
+        does internally -- used by routes_worker.py, where the progress
+        update comes from an HTTP request (a remote worker), not a local
+        closure. Also serves as the claim's heartbeat: `requeue_stale`
+        checks this same `updated_at` bump."""
+        self._set(job_id, progress=progress)
+
+    def mark_done(self, job_id: str, result: dict[str, Any]) -> None:
+        self._set(job_id, status="done", progress=1.0, result=result)
+
+    def mark_error(self, job_id: str, error: str) -> None:
+        self._set(job_id, status="error", error=error)
+
+    def enqueue(self, job_id: str, payload: dict[str, Any]) -> None:
+        """Marks a job as queued/claimable, with the data a worker (local or
+        remote) needs to actually execute it. Unlike `submit`, this does NOT
+        run anything -- the job sits `pending` until some worker calls
+        `claim_next`."""
+        self._set(job_id, payload=payload)
+
+    def claim_next(self, kind: str, worker_id: str) -> JobRecord | None:
+        """Atomically claims the oldest unclaimed `pending` job of `kind`,
+        or returns None if there isn't one. Safe to call concurrently from
+        multiple workers (local and/or remote) -- the whole
+        select-then-update happens under `self._lock`, so two callers can
+        never claim the same job."""
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE kind = ? AND status = 'pending' AND payload IS NOT NULL "
+                "ORDER BY created_at ASC LIMIT 1",
+                (kind,),
+            ).fetchone()
+            if row is None:
+                return None
+            now = _now_iso()
+            conn.execute(
+                "UPDATE jobs SET status = 'running', worker_id = ?, updated_at = ? WHERE id = ?",
+                (worker_id, now, row["id"]),
+            )
+            claimed = conn.execute("SELECT * FROM jobs WHERE id = ?", (row["id"],)).fetchone()
+        return self._row_to_record(claimed)
+
+    def requeue_stale(self, kind: str, lease_seconds: float) -> int:
+        """Resets any `running` job of `kind` whose worker hasn't reported
+        progress (bumped `updated_at`) in over `lease_seconds` back to
+        `pending`, so another worker can pick it up -- covers a worker that
+        vanished mid-render (closed laptop, network drop, crash). Returns
+        how many were reset."""
+        cutoff = _iso_minus_seconds(lease_seconds)
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE jobs SET status = 'pending', worker_id = NULL "
+                "WHERE kind = ? AND status = 'running' AND worker_id IS NOT NULL AND updated_at < ?",
+                (kind, cutoff),
+            )
+            return cur.rowcount
+
 
 def _now_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
+
+
+def _iso_minus_seconds(seconds: float) -> str:
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()

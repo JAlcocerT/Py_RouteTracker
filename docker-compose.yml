@@ -8,9 +8,30 @@ services:
       # reachable both from localhost and from any device on your Tailscale
       # network via the host's Tailscale IP -- no extra network config needed.
       - "7000:7000"
+    environment:
+      # Empty/unset by default -- distributed rendering is opt-in (see
+      # README.md's "Distributed rendering" section). Generate a token with
+      # `openssl rand -hex 32` and set it in a `.env` file next to this
+      # compose file, or export it in your shell, to turn it on.
+      - ROUTETRACKER_WORKER_TOKEN=${ROUTETRACKER_WORKER_TOKEN:-}
     volumes:
       - routetracker_data:/data
     restart: unless-stopped
+
+  # Optional extra worker running on this same host, for convenience/testing
+  # (`docker compose --profile worker up`). The more realistic case -- a
+  # friend's separate machine -- isn't started from here at all; it's a
+  # standalone `docker run` pointed at this host's address, documented in
+  # README.md.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.worker_main", "--server", "http://routetracker:7000", "--token", "${ROUTETRACKER_WORKER_TOKEN}", "--name", "${ROUTETRACKER_WORKER_NAME:-compose-worker}"]
+    depends_on:
+      - routetracker
+    restart: unless-stopped
+    profiles: ["worker"]
 
 volumes:
   routetracker_data:

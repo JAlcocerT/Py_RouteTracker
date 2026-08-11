@@ -80,9 +80,12 @@ Two independent, always-on cleanup mechanisms (see root `README.md` for the user
 version) — neither is optional, both are covered by `tests/test_cleanup.py` and
 `tests/test_api.py`:
 
-1. **Per-render scratch** (`work_dir`: the trimmed clip + HUD frame PNGs) is deleted in a
-   `finally` block in `routes_render.py`, immediately after `render_and_composite` returns or
-   raises. It never survives past a single render job.
+1. **Per-render scratch** (`work_dir`: the trimmed clip + HUD frame PNGs + telemetry
+   manifest) is deleted immediately after a render finishes or fails -- in
+   `LocalRenderWorker._process_one` for a local render, or in the `/complete`/`/fail`
+   handlers of `routes_worker.py` for a remote one. Cleanup always happens *before* the job
+   is marked `done`/`error`, not after -- otherwise a client polling status could observe
+   "done" and check for the (still briefly present) work_dir in the gap before cleanup runs.
 2. **Uploaded videos, GPX files, cached telemetry/lap parquet, and rendered output** are
    deleted by `app.core.cleanup.RetentionSweeper`, a daemon thread started in `main.py`'s
    lifespan handler that runs `sweep_expired_videos` every `ROUTETRACKER_SWEEP_INTERVAL_SECONDS`
@@ -94,3 +97,58 @@ version) — neither is optional, both are covered by `tests/test_cleanup.py` an
 `GET /api/health` reports the current `retention_minutes`, and `GET /api/videos/{id}` reports
 that video's computed `expires_at` — the frontend uses both to tell users when their file will
 be gone.
+
+## Distributed rendering
+
+See root `README.md`'s "Distributed rendering" section for the user-facing picture and
+security model. Architecture:
+
+- **`app/render/video_render.py`** splits the render at its natural cheap/expensive
+  boundary: `prepare_render_job` (trim + window telemetry -- cheap, always runs on the
+  coordinator, since only it has the original upload) produces a `PreparedRenderJob`;
+  `execute_prepared_render` (draw HUD frames + composite -- the actual bottleneck) runs
+  identically whether called in-process or by a worker that fetched its inputs over HTTP.
+  `render_and_composite` is kept as a thin wrapper calling both, for callers (tests, and
+  conceptually "a single machine doing everything") that don't care about the split.
+- **`app/core/jobs.py`**'s `jobs` table gained `payload` (the JSON render request) and
+  `worker_id` columns (migrated via a guarded `ALTER TABLE`, not a fresh-schema assumption).
+  `enqueue`/`claim_next`/`requeue_stale` implement a pull-based claim queue -- workers ask
+  for work rather than the coordinator tracking who's available. `claim_next`'s
+  select-then-update happens under the manager's existing lock, so concurrent claimers (the
+  local worker and any number of remote ones) can never claim the same job twice. Only
+  render jobs use this; extraction jobs still go straight through the older
+  `create_job`/`submit` (immediate, in-process, unchanged).
+- **`app/render/coordinator.py`**'s `claim_and_prepare_render` is the shared "claim + prep"
+  step both the local worker and the `/api/worker/jobs/next` route call -- claims a job, loads
+  that video's telemetry, runs `prepare_render_job`, and writes a `telemetry.json` manifest
+  alongside the trimmed clip in `work_dir` (`settings.work_dir / job_id`, a fixed convention
+  so a later, separate HTTP request -- a remote worker fetching inputs -- can find them with
+  no in-memory state to carry over).
+- **`app/render/local_worker.py`**'s `LocalRenderWorker` is a background thread (started in
+  `main.py`'s lifespan, same pattern as `RetentionSweeper`) that loops
+  `claim_and_prepare_render` + `execute_prepared_render` -- this is what makes local-only
+  operation work with zero configuration; it's simply always the first available worker.
+  Deliberately processes one job at a time (unlike the old `ThreadPoolExecutor` submission
+  path, which could run several renders concurrently). The same file's
+  `StaleRenderJobRequeuer` periodically calls `requeue_stale` so a render claimed by a worker
+  that vanished mid-job (closed laptop, network drop) doesn't stay stuck forever --
+  `ROUTETRACKER_WORKER_LEASE_MINUTES` (default 30).
+- **`app/api/routes_worker.py`**, prefix `/api/worker`, gated by `require_worker_token` on
+  every route (503 if `ROUTETRACKER_WORKER_TOKEN` is unset, 401 on a wrong/missing bearer
+  token): `GET /jobs/next` (claim), `GET /jobs/{id}/inputs/{video,telemetry}` (fetch),
+  `POST /jobs/{id}/progress`, `POST /jobs/{id}/complete` (multipart upload), `POST
+  /jobs/{id}/fail`.
+- **`app/worker_main.py`** (`python -m app.worker_main --server ... --token ...`) is the
+  standalone remote-worker CLI. Deliberately never imports `app.core.config`/`settings` at
+  all -- it's `httpx` calls to the coordinator plus the pure rendering functions above, into
+  its own `tempfile.TemporaryDirectory`. Runs from the same Docker image already published by
+  CI/CD (`docker-multiarch.yml`), just with a different `command:`.
+
+Tests: `tests/test_jobs.py` covers the claim queue directly (atomicity, kind filtering,
+requeue). `tests/test_video_render.py` covers the prepare/execute split producing equivalent
+output to the combined pipeline. `tests/test_routes_worker.py` covers the full worker HTTP
+API using a second, lifespan-free FastAPI app (so `LocalRenderWorker` isn't running in the
+background racing the test's own manual claims) -- auth/feature-flag behavior, and a full
+claim → fetch inputs → report progress → complete round trip. All of the above was also
+manually verified against a real, separate `app.worker_main` process (different CWD, no
+shared environment with the coordinator) claiming and completing a real render over HTTP.

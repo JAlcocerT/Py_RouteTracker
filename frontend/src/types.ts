@@ -42,6 +42,7 @@ export interface JobStatus {
   progress: number
   error: string | null
   result: Record<string, unknown> | null
+  worker_id: string | null
 }
 
 export interface WidgetSelection {

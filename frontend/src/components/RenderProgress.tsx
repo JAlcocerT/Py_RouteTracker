@@ -50,6 +50,9 @@ export function RenderProgress({ jobId, onDone }: RenderProgressProps) {
         {job.status === 'pending' && 'Queued…'}
         {job.status === 'done' && 'Done!'}
         {job.status === 'error' && `Failed: ${job.error}`}
+        {job.worker_id && job.worker_id !== 'local' && (job.status === 'running' || job.status === 'done') && (
+          <span className="progress__worker"> — rendered on {job.worker_id}</span>
+        )}
       </div>
     </div>
   )

@@ -342,3 +342,7 @@ section h2 {
   color: var(--text-dim);
   font-size: 13px;
 }
+
+.progress__worker {
+  color: var(--accent);
+}

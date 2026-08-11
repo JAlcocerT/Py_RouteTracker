@@ -19,4 +19,8 @@ async def get_job(job_id: str):
         "progress": job.progress,
         "error": job.error,
         "result": job.result,
+        # "local" for the built-in worker, a client-supplied name for a
+        # remote one (see app.worker_main --name), or None if unclaimed /
+        # not a queued render job (e.g. an extraction job).
+        "worker_id": job.worker_id,
     }
