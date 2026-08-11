@@ -1,5 +1,10 @@
 services:
   routetracker:
+    # Both image: and build: present: `docker compose pull` (or `up` without
+    # --build) fetches the pre-built multi-arch image CI/CD publishes;
+    # `docker compose up --build` still builds locally and tags the result
+    # with this same name, exactly as before -- your choice either way.
+    image: ghcr.io/jlleongarcia/py_routetracker:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -24,6 +29,7 @@ services:
   # standalone `docker run` pointed at this host's address, documented in
   # README.md.
   worker:
+    image: ghcr.io/jlleongarcia/py_routetracker:latest
     build:
       context: .
       dockerfile: Dockerfile
