@@ -40,6 +40,16 @@ def test_smooth_speed_outliers_short_series_is_a_noop():
     assert smooth_speed_outliers(speed).tolist() == [10.0, 20.0]
 
 
+def test_smooth_speed_outliers_rejects_two_sample_burst():
+    # A brief multipath dropout (e.g. passing under a bridge/netting on a
+    # go-kart track) commonly glitches more than one consecutive GPS fix,
+    # not just one -- a plain window=3 median can't outvote that (the bad
+    # samples dominate their own window), so this must actually be rejected.
+    speed = pd.Series([84.0, 85.0, 86.0, 300.0, 305.0, 85.0, 84.0, 85.0])
+    cleaned = smooth_speed_outliers(speed)
+    assert cleaned.max() < 100
+
+
 def test_detect_laps_max_speed_ignores_single_sample_gps_spike():
     # 85 km/h go-kart lap with one glitched sample injected mid-lap
     df = _circular_track_df(n_laps=2, lap_time_s=40, dt=0.5, track_radius_m=150.31)
@@ -47,6 +57,23 @@ def test_detect_laps_max_speed_ignores_single_sample_gps_spike():
 
     spike_idx = len(df) // 4
     df.loc[spike_idx, "speed"] = 300.0
+    df["speed"] = smooth_speed_outliers(df["speed"])
+
+    start_lat, start_lon = get_coordinates_at_time(df, target_time=0.0)
+    result = detect_laps(df, start_lat, start_lon, radius_m=15.0, min_lap_time_s=20.0)
+
+    assert len(result.lap_table) >= 1
+    assert result.lap_table["max_speed"].max() < 100
+
+
+def test_detect_laps_max_speed_ignores_two_sample_gps_burst():
+    # same as above, but with a two-consecutive-sample glitch burst, which
+    # is the more realistic failure mode and the one the original
+    # window=3-median fix didn't actually cover
+    df = _circular_track_df(n_laps=2, lap_time_s=40, dt=0.5, track_radius_m=150.31)
+    spike_idx = len(df) // 4
+    df.loc[spike_idx, "speed"] = 300.0
+    df.loc[spike_idx + 1, "speed"] = 305.0
     df["speed"] = smooth_speed_outliers(df["speed"])
 
     start_lat, start_lon = get_coordinates_at_time(df, target_time=0.0)

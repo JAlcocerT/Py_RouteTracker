@@ -4,6 +4,7 @@ import subprocess
 import numpy as np
 import pandas as pd
 import pytest
+from PIL import Image
 
 from app.core.ffmpeg_utils import get_video_duration
 from app.render.hud_layers import RenderConfig
@@ -120,6 +121,30 @@ def test_prepare_then_execute_matches_render_and_composite(tmp_path):
     for values in (combined_progress, split_progress):
         assert values[-1] == pytest.approx(1.0)
         assert values == sorted(values)
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed in this environment")
+def test_execute_prepared_render_rescales_canvas_to_real_video_resolution(tmp_path):
+    """render_config_from_payload never sets width_px/height_px (see
+    app.render.render_config) -- every real render request arrives here
+    with RenderConfig's 1600x900 default, regardless of the actual
+    footage's resolution. execute_prepared_render must override it to match
+    the real (trimmed) video, since ffmpeg's overlay filter composites the
+    HUD PNG unscaled, anchored at (0,0)."""
+    source = tmp_path / "source.mp4"
+    _make_test_video(source, duration=2, size="320x180", rate=10)
+    duration = get_video_duration(source)
+    df = _synthetic_df(int(duration * 10))
+    config = RenderConfig(enable_gg=False, enable_minimap=False, enable_session_graph=False)
+
+    prepared = prepare_render_job(source, df, [], trim_start=0.0, trim_end=duration, work_dir=tmp_path / "work")
+    out = tmp_path / "out.mp4"
+    execute_prepared_render(prepared, config, out, n_workers=1)
+
+    frame_files = sorted((tmp_path / "work" / "hud_frames").glob("frame_*.png"))
+    assert frame_files, "expected HUD frames to still be on disk"
+    with Image.open(frame_files[0]) as img:
+        assert img.size == (320, 180)
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed in this environment")

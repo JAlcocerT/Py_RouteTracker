@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 from PIL import Image
 
-from app.render.hud_layers import HudRenderer, RenderConfig
+from app.render.hud_layers import HudRenderer, RenderConfig, config_for_resolution
 
 
 def _synthetic_df(n: int = 20) -> pd.DataFrame:
@@ -51,6 +51,34 @@ def test_disabled_widgets_are_hidden(tmp_path):
         assert not hasattr(renderer, "gg_ball")
     finally:
         renderer.close()
+
+
+def test_config_for_resolution_matches_real_pixel_size():
+    # ffmpeg's overlay filter composites the HUD PNG unscaled -- the
+    # canvas must end up pixel-for-pixel the real video's resolution, not
+    # just proportionally close to it.
+    scaled = config_for_resolution(RenderConfig(), width_px=3840, height_px=2160)
+    assert (scaled.width_px, scaled.height_px) == (3840, 2160)
+
+
+def test_config_for_resolution_keeps_design_width_in_inches():
+    # every rect fraction / pt font size in hud_layers.py was tuned against
+    # a 16-inch-wide figure (1600px / dpi 100) -- that must stay constant
+    # regardless of the real video's resolution, or panels/text would end
+    # up a different size relative to the frame at different resolutions.
+    base = RenderConfig()
+    design_width_in = base.width_px / base.dpi
+    for width_px, height_px in [(3840, 2160), (640, 360), (1920, 1080)]:
+        scaled = config_for_resolution(base, width_px, height_px)
+        assert scaled.width_px / scaled.dpi == pytest.approx(design_width_in, abs=0.05)
+
+
+def test_config_for_resolution_preserves_other_fields():
+    base = RenderConfig(enable_minimap=False, theme="dark_background", max_expected_speed_kmh=200.0)
+    scaled = config_for_resolution(base, 800, 450)
+    assert scaled.enable_minimap is False
+    assert scaled.theme == "dark_background"
+    assert scaled.max_expected_speed_kmh == 200.0
 
 
 def test_draw_frame_out_of_range_is_noop():

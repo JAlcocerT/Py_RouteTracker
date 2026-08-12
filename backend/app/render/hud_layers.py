@@ -36,7 +36,7 @@ anyway.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import matplotlib
@@ -47,7 +47,7 @@ import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.gridspec import GridSpec
+from matplotlib.patches import FancyBboxPatch
 from PIL import Image
 
 try:
@@ -76,7 +76,61 @@ class RenderConfig:
     minimap_trail_frames: int = 150
 
 
+# Every rect fraction and pt-sized font in this module was tuned by eye
+# against the default 1600x900 @ dpi 100 canvas -- i.e. a 16x9-inch figure.
+# That's the "design width" config_for_resolution scales dpi against.
+_DESIGN_WIDTH_IN = RenderConfig().width_px / RenderConfig().dpi
+
+
+def config_for_resolution(base: RenderConfig, width_px: int, height_px: int) -> RenderConfig:
+    """Returns a copy of `base` re-targeted at a video's real pixel
+    resolution, keeping every panel/font visually proportional regardless of
+    that resolution.
+
+    This matters because ffmpeg's overlay filter (app.core.ffmpeg_utils.
+    overlay_png_sequence) composites the HUD PNG sequence at its own native
+    pixel size, unscaled, anchored at (0,0) -- it does not stretch the HUD
+    to fit the footage. Without this, corner-anchored panels only actually
+    land in the real video frame's corners by coincidence (i.e. only when
+    the footage happens to be exactly 1600x900).
+
+    dpi is derived from width alone, not width and height independently, so
+    the figure's physical design width stays fixed at _DESIGN_WIDTH_IN
+    inches; every rect fraction and font size in this module was tuned
+    against that. Real action-cam footage is essentially always landscape,
+    so anchoring on width is the reasonable general case -- an unusually
+    tall/narrow (portrait) input still renders (matplotlib just gets a
+    non-9-inch-tall figure), just with text sized relative to width rather
+    than height.
+    """
+    dpi = max(1, round(width_px / _DESIGN_WIDTH_IN))
+    return replace(base, width_px=width_px, height_px=height_px, dpi=dpi)
+
+
 _OUTLINE = [pe.withStroke(linewidth=3, foreground="black")]
+
+# Rounded, semi-transparent dark backing panels give every widget contrast
+# against arbitrary, unpredictable footage (bright sky, glare, light-colored
+# kerbs/barriers) that a bare glow/outline alone can't reliably beat -- see
+# the mockups compared against a synthetic busy background before this
+# layout was picked. Corner placement (bottom-left/right, tied together by
+# a thin strip along the very bottom edge) keeps the center of the frame,
+# where the actual footage subject usually is, uncovered.
+_PANEL_FACE_RGB = (0.02, 0.05, 0.06)
+_PANEL_EDGE = (1, 1, 1, 0.18)
+
+# Figure-fraction (left, bottom, width, height) / [left, bottom, width,
+# height] rects. Kept as module constants rather than RenderConfig fields --
+# this is a considered visual design, not a per-render knob callers should
+# reasonably want to override (unlike the toggles/thresholds on
+# RenderConfig itself).
+_LEFT_PANEL_RECT = (0.015, 0.03, 0.30, 0.40)
+_RIGHT_PANEL_RECT = (0.685, 0.03, 0.30, 0.40)
+_STRIP_RECT = (0.015, 0.445, 0.97, 0.09)
+_SPEEDO_RECT = [0.02, 0.20, 0.29, 0.27]
+_GG_RECT = [0.045, 0.045, 0.10, 0.14]
+_MINIMAP_RECT = [0.71, 0.06, 0.25, 0.36]
+_SESSION_RECT = [0.03, 0.455, 0.94, 0.07]
 
 
 class HudRenderer:
@@ -108,11 +162,12 @@ class HudRenderer:
         self.fig = plt.figure(figsize=(fig_w, fig_h), dpi=cfg.dpi)
         self.fig.patch.set_alpha(0.0)
 
-        gs = GridSpec(2, 3, height_ratios=[3, 1], figure=self.fig)
-        self.ax_spd = self.fig.add_subplot(gs[0, 0])
-        self.ax_gg = self.fig.add_subplot(gs[0, 1])
-        self.ax_map = self.fig.add_subplot(gs[0, 2])
-        self.ax_gph = self.fig.add_subplot(gs[1, :])
+        self._build_panels()
+
+        self.ax_spd = self.fig.add_axes(_SPEEDO_RECT)
+        self.ax_gg = self.fig.add_axes(_GG_RECT)
+        self.ax_map = self.fig.add_axes(_MINIMAP_RECT)
+        self.ax_gph = self.fig.add_axes(_SESSION_RECT)
 
         for ax, enabled in (
             (self.ax_spd, cfg.enable_speedo),
@@ -134,19 +189,57 @@ class HudRenderer:
             self._build_session_graph()
 
         if _HAS_CYBERPUNK and style == "cyberpunk" and cfg.enable_speedo:
-            mplcyberpunk.add_glow_effects(ax=self.ax_spd)
+            # add_glow_effects() also calls add_underglow(), which fills the
+            # area under every line down to y=0 -- fine for a time series,
+            # but this axes' only line at build time is the static full-arc
+            # gauge track, so that fill becomes a translucent wedge sitting
+            # right behind the speed readout. Only the line-glow half is
+            # wanted here.
+            mplcyberpunk.make_lines_glow(ax=self.ax_spd)
+
+    def _build_panels(self) -> None:
+        """Static (never redrawn per-frame) backing panels -- part of the
+        cached background like the rest of a widget's non-moving pixels.
+        Added to the figure before any widget axes so they draw underneath."""
+        cfg = self.config
+        left_needed = cfg.enable_speedo or cfg.enable_gg
+        right_needed = cfg.enable_minimap
+        strip_needed = cfg.enable_session_graph
+        if not (left_needed or right_needed or strip_needed):
+            return
+
+        ax = self.fig.add_axes([0, 0, 1, 1])
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis("off")
+        ax.patch.set_alpha(0)
+        if left_needed:
+            ax.add_patch(self._panel_patch(_LEFT_PANEL_RECT))
+        if right_needed:
+            ax.add_patch(self._panel_patch(_RIGHT_PANEL_RECT))
+        if strip_needed:
+            ax.add_patch(self._panel_patch(_STRIP_RECT, radius=0.015, alpha=0.35))
+
+    @staticmethod
+    def _panel_patch(rect: tuple[float, float, float, float], radius: float = 0.02, alpha: float = 0.42) -> FancyBboxPatch:
+        left, bottom, width, height = rect
+        return FancyBboxPatch(
+            (left, bottom), width, height,
+            boxstyle=f"round,pad=0,rounding_size={radius}",
+            linewidth=1.2, edgecolor=_PANEL_EDGE, facecolor=(*_PANEL_FACE_RGB, alpha),
+        )
 
     def _build_speedo(self) -> None:
         theta = np.linspace(np.pi, 0, 100)
-        rad = 0.35
+        rad = 0.36
         self._arc_x = 0.5 + rad * np.cos(theta)
-        self._arc_y = 0.4 + rad * np.sin(theta)
-        self.ax_spd.plot(self._arc_x, self._arc_y, color="white", lw=1, alpha=0.1)
-        self.sp_arc, = self.ax_spd.plot([], [], lw=8, solid_capstyle="round", path_effects=_OUTLINE)
-        self.sp_txt = self.ax_spd.text(0.5, 0.35, "", fontsize=45, color="white", ha="center", fontweight="bold", path_effects=_OUTLINE)
-        self.ax_spd.text(0.5, 0.25, "KM/H", fontsize=12, color="#00ff9f", ha="center", path_effects=_OUTLINE)
-        self.lap_txt = self.ax_spd.text(0.1, 0.85, "LAP", fontsize=16, color="cyan", ha="left", fontweight="bold", path_effects=_OUTLINE)
-        self.last_txt = self.ax_spd.text(0.9, 0.85, "LAST", fontsize=12, color="yellow", ha="right", fontweight="bold", path_effects=_OUTLINE)
+        self._arc_y = 0.32 + rad * np.sin(theta)
+        self.ax_spd.plot(self._arc_x, self._arc_y, color="white", lw=2, alpha=0.15)
+        self.sp_arc, = self.ax_spd.plot([], [], lw=9, solid_capstyle="round", path_effects=_OUTLINE)
+        self.sp_txt = self.ax_spd.text(0.5, 0.30, "", fontsize=42, color="white", ha="center", fontweight="bold", path_effects=_OUTLINE)
+        self.ax_spd.text(0.5, 0.16, "KM/H", fontsize=13, color="#00ff9f", ha="center", fontweight="bold", path_effects=_OUTLINE)
+        self.lap_txt = self.ax_spd.text(0.06, 0.90, "LAP", fontsize=16, color="cyan", ha="left", fontweight="bold", path_effects=_OUTLINE)
+        self.last_txt = self.ax_spd.text(0.94, 0.90, "LAST", fontsize=13, color="yellow", ha="right", fontweight="bold", path_effects=_OUTLINE)
         self.ax_spd.set_xlim(0, 1)
         self.ax_spd.set_ylim(0, 1)
         self._dynamic_artists += [self.sp_arc, self.sp_txt, self.lap_txt, self.last_txt]
@@ -156,28 +249,31 @@ class HudRenderer:
         self.ax_gg.set_xlim(-cfg.limit_g, cfg.limit_g)
         self.ax_gg.set_ylim(-cfg.limit_g, cfg.limit_g)
         self.ax_gg.set_aspect("equal")
-        self.ax_gg.add_artist(plt.Circle((0, 0), 0.5, color="white", fill=False, alpha=0.2, ls="--"))
+        self.ax_gg.add_artist(plt.Circle((0, 0), 0.5, color="white", fill=False, alpha=0.25, ls="--"))
         self.ax_gg.add_artist(plt.Circle((0, 0), 1.0, color="white", fill=False, alpha=0.4, ls="-"))
         self.ax_gg.axhline(0, color="white", alpha=0.1)
         self.ax_gg.axvline(0, color="white", alpha=0.1)
         self.gg_trail, = self.ax_gg.plot([], [], color="cyan", lw=2, alpha=0.6, path_effects=_OUTLINE)
-        self.gg_ball, = self.ax_gg.plot([], [], "o", color="#ff0055", markersize=12, mec="white", zorder=10)
-        self.gg_txt = self.ax_gg.text(0.05, 0.9, "", transform=self.ax_gg.transAxes, color="white", fontsize=10, path_effects=_OUTLINE)
+        self.gg_ball, = self.ax_gg.plot([], [], "o", color="#ff0055", markersize=11, mec="white", zorder=10)
+        self.gg_txt = self.ax_gg.text(0.05, 0.85, "", transform=self.ax_gg.transAxes, color="white", fontsize=10, fontweight="bold", path_effects=_OUTLINE)
         self._dynamic_artists += [self.gg_trail, self.gg_ball, self.gg_txt]
 
     def _build_minimap(self) -> None:
         self.ax_map.set_aspect("equal")
-        self.ax_map.plot(self.df["lon"], self.df["lat"], color="cyan", lw=2, alpha=0.3)
+        self.ax_map.plot(self.df["lon"], self.df["lat"], color="cyan", lw=2, alpha=0.35)
         self.map_dot, = self.ax_map.plot([], [], "o", color="white", mec="red", mew=2, ms=8)
         self.map_tail, = self.ax_map.plot([], [], color="#00ff9f", lw=3, alpha=0.9, path_effects=_OUTLINE)
         self._dynamic_artists += [self.map_dot, self.map_tail]
 
     def _build_session_graph(self) -> None:
-        self.ax_gph.set_title("SESSION TELEMETRY", color="white", fontsize=9, pad=5, path_effects=_OUTLINE)
-        self.ax_gph.plot(self.df["time"], self.df["speed"], color="white", alpha=0.2, lw=1)
+        # A thin strip pinned along the bottom edge, not a full-height
+        # panel -- there's no room for an axis title here, and the graph's
+        # own contrasting color against the dim static trace already reads
+        # as "this is the session telemetry" without one.
+        self.ax_gph.plot(self.df["time"], self.df["speed"], color="white", alpha=0.25, lw=1)
         for i in self.lap_indices:
-            self.ax_gph.axvline(self.df.iloc[i]["time"], color="yellow", ls="--", alpha=0.3)
-        self.gph_line, = self.ax_gph.plot([], [], color="#00ff9f", lw=2, path_effects=_OUTLINE)
+            self.ax_gph.axvline(self.df.iloc[i]["time"], color="yellow", ls="--", alpha=0.35)
+        self.gph_line, = self.ax_gph.plot([], [], color="#00ff9f", lw=2.2, path_effects=_OUTLINE)
         self.gph_dot, = self.ax_gph.plot([], [], "o", color="#ff0055", ms=6, mec="white")
         self.ax_gph.set_xlim(self.df["time"].min(), self.df["time"].max())
         top = self.df["speed"].max()

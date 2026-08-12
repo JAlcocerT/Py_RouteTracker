@@ -23,8 +23,8 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
-from app.core.ffmpeg_utils import overlay_png_sequence, trim_video
-from app.render.hud_layers import HudRenderer, RenderConfig
+from app.core.ffmpeg_utils import get_video_resolution, overlay_png_sequence, trim_video
+from app.render.hud_layers import HudRenderer, RenderConfig, config_for_resolution
 
 ProgressCallback = Callable[[float], None]
 
@@ -198,6 +198,12 @@ def execute_prepared_render(
             on_progress(max(0.0, min(1.0, fraction)))
 
     report(0.0)
+    # The HUD canvas must be pixel-for-pixel the same size as the real
+    # (trimmed) footage -- ffmpeg's overlay filter composites it unscaled,
+    # anchored at (0,0), so any mismatch means the layout doesn't actually
+    # line up with the real frame. See config_for_resolution's docstring.
+    real_width, real_height = get_video_resolution(prepared.trimmed_video_path)
+    config = config_for_resolution(config, real_width, real_height)
     render_hud_frames(
         prepared.windowed_telemetry, prepared.lap_indices, config, frames_dir,
         n_workers=n_workers, on_progress=lambda f: report(0.9 * f),

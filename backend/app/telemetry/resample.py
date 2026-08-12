@@ -11,21 +11,42 @@ import numpy as np
 import pandas as pd
 
 
-def smooth_speed_outliers(speed: pd.Series, window: int = 3) -> pd.Series:
-    """Rejects isolated GPS speed spikes with a rolling median filter.
+def smooth_speed_outliers(speed: pd.Series, window: int = 5, mad_threshold: float = 5.0) -> pd.Series:
+    """Rejects implausible GPS speed spikes with a Hampel filter (rolling
+    median + median-absolute-deviation threshold).
 
     Both telemetry sources are exposed to this: a GPS chip's own reported
     speed can glitch during multipath/low-satellite-count, and a
     position-delta-derived speed (external_gpx) is even more sensitive --
     a couple of meters of ordinary position jitter divided by a small time
     delta between fixes produces a wildly implausible instantaneous speed.
-    A short centered median only rejects a sample that disagrees with both
-    its neighbors, which a genuine (sustained) acceleration/braking change
-    doesn't -- it doesn't get flattened, only single-sample noise does.
+
+    A plain small rolling median (the original approach here) only rejects
+    a sample that disagrees with *both* its immediate neighbors -- a burst
+    of two or more consecutive bad fixes (e.g. a trackside structure
+    blocking sky view for a fraction of a second, common right where a
+    go-kart track passes under a bridge/netting) drags the window's median
+    along with it and survives untouched. Using a wider window plus an
+    explicit outlier test (deviation from the local median, scaled against
+    the local median absolute deviation) instead of blanket-replacing every
+    sample lets the window stay wide enough to outvote a short burst while
+    only actually touching samples that are statistically implausible, so a
+    genuine (sustained) acceleration/braking ramp is left alone. This is
+    still fundamentally limited by "majority of the window must be good
+    fixes" -- a dropout lasting more than about half the window can't be
+    distinguished from a real sustained speed change by this alone.
     """
     if len(speed) < window:
         return speed
-    return speed.rolling(window, center=True, min_periods=1).median()
+    median = speed.rolling(window, center=True, min_periods=1).median()
+    deviation = (speed - median).abs()
+    mad = deviation.rolling(window, center=True, min_periods=1).median()
+    # 1.4826 makes MAD comparable to a standard deviation for normally
+    # distributed data; floored so a near-constant local window (MAD ~ 0)
+    # doesn't make ordinary tiny wobble register as an outlier.
+    scaled_mad = (mad * 1.4826).clip(lower=1.0)
+    is_outlier = deviation > mad_threshold * scaled_mad
+    return speed.where(~is_outlier, median)
 
 
 def resample_to_grid(df: pd.DataFrame, duration_sec: float, target_fps: float, value_cols: list[str]) -> pd.DataFrame:

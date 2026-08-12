@@ -24,6 +24,21 @@ def get_video_duration(video_path: Path) -> float:
     return float(out)
 
 
+def get_video_resolution(video_path: Path) -> tuple[int, int]:
+    """(width, height) of the video's first stream, in pixels."""
+    require_binary("ffprobe")
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=x:p=0",
+        str(video_path),
+    ]
+    out = subprocess.check_output(cmd).decode().strip()
+    width_str, height_str = out.split("x")
+    return int(width_str), int(height_str)
+
+
 def trim_video(source: Path, start_sec: float, end_sec: float, dest: Path) -> Path:
     """Frame-accurate trim via re-encode (stream-copy trims only cut on
     keyframes, which would desync the HUD overlay from the footage)."""
