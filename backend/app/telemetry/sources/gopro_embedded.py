@@ -1,10 +1,16 @@
 """GoPro embedded-metadata telemetry source.
 
 Ported from legacy/overlay/racing_hud_v7.py:61-151 and legacy/overlay/lap_timer_v7.py:26-91.
-Behavior is unchanged (same regexes, same GPMD ACCL struct layout, same
-km/h conversion); what changed is that every knob is now a function argument
-instead of a module-level constant, and paths are injected rather than
-hardcoded to one developer's machine.
+The GPMD ACCL struct layout is unchanged, and every knob is now a function
+argument instead of a module-level constant, with paths injected rather than
+hardcoded to one developer's machine. GPS speed parsing and per-fix timing
+were tightened after an audit found the original blindly assumed every `GPS
+Speed` line was a bare, unit-less m/s value (true for GoPro's own GPMF
+stream, but silently wrong -- and undetectable by outlier smoothing, since
+it's a uniform bias, not a per-sample anomaly -- for anything that instead
+reports a value with a unit suffix), and assumed fixes were spaced perfectly
+evenly across the whole video rather than using the per-block timing the
+dump already carries. See docs/speed-computation-audit.html.
 """
 
 from __future__ import annotations
@@ -24,15 +30,52 @@ from app.telemetry.sources.base import TelemetryResult, empty_result
 
 __all__ = [
     "dms_to_dd", "get_video_duration", "extract_exiftool_dump", "extract_gpmd_binary",
-    "parse_gps_data", "parse_gpmd_accel", "sync_dataframes", "GoProEmbeddedSource",
+    "convert_speed_to_kmh", "parse_gps_data", "parse_gpmd_accel", "sync_dataframes",
+    "GoProEmbeddedSource",
 ]
 
 _ENCODINGS = ("utf-8", "utf-16le", "latin-1")
 
 _DMS_RE = re.compile(r"[deg'\"]+")
-_SPEED_RE = re.compile(r"GPS Speed\s+:\s+([\d.]+)")
+# Captures the number *and* whatever unit token (if any) follows it, rather
+# than silently discarding it -- see convert_speed_to_kmh.
+_SPEED_RE = re.compile(r"GPS Speed\s+:\s+([\d.]+)\s*([a-zA-Z/]*)")
 _LAT_RE = re.compile(r"GPS Latitude\s+:\s+(.+)")
 _LON_RE = re.compile(r"GPS Longitude\s+:\s+(.+)")
+# GoPro's GPMD stream is chunked into ~1s blocks; each one is preceded by its
+# own video-relative offset ("Sample Time : 12.01 s"). Used to place fixes
+# at their real position in the video instead of assuming uniform spacing
+# across the whole session -- see _assign_fix_times.
+_SAMPLE_TIME_RE = re.compile(r"Sample Time\s+:\s+([\d.]+)\s*s")
+
+# GoPro's own GPMF GPS5 stream reports speed as a bare number in m/s -- no
+# unit suffix, which is what an empty string here maps to. exiftool prints a
+# *standard* EXIF/QuickTime GPSSpeed tag (as opposed to GoPro's proprietary
+# stream) with its GPSSpeedRef-declared unit appended instead, so a dump
+# from a different camera/re-encoder can legitimately show up already
+# labeled in km/h or mph.
+_SPEED_UNIT_TO_KMH_FACTOR = {
+    "": 3.6,  # bare number -> assume GoPro's own m/s convention
+    "m/s": 3.6,
+    "km/h": 1.0,
+    "kmh": 1.0,
+    "kph": 1.0,
+    "mph": 1.609344,
+    "kn": 1.852,
+    "kt": 1.852,
+    "knots": 1.852,
+}
+
+
+def convert_speed_to_kmh(value: float, unit: str) -> float:
+    """Converts a parsed GPS-speed number to km/h based on its *actual*
+    unit instead of always assuming m/s. An unrecognized/garbled unit token
+    falls back to the historical m/s assumption rather than dropping the
+    sample -- but that fallback is exactly the case worth surfacing if
+    displayed speed still looks wrong; see docs/speed-computation-audit.html.
+    """
+    factor = _SPEED_UNIT_TO_KMH_FACTOR.get(unit.strip().lower(), 3.6)
+    return value * factor
 
 
 def dms_to_dd(dms: str) -> float | None:
@@ -70,17 +113,58 @@ def extract_gpmd_binary(video_path: Path, dest_bin: Path) -> Path:
     return dest_bin
 
 
+def _assign_fix_times(block_starts: np.ndarray, duration_sec: float) -> np.ndarray:
+    """Places each fix within its own GPMF block's real video-time span,
+    rather than assuming every fix in the session is evenly spaced across
+    the whole video.
+
+    GPS fix density can vary block-to-block (weak signal, a brief pause),
+    so a single global `linspace(0, duration_sec, n)` silently drifts a
+    correct speed reading to the wrong on-screen moment when it does. Each
+    ~1s GPMF block carries its own real video-relative offset ahead of its
+    fixes (`Sample Time`); this spreads that block's own fixes evenly across
+    [its offset, the next block's offset) instead.
+
+    Falls back to exactly the old whole-session behavior when the dump
+    never carried a `Sample Time` line at all (every fix then shares the
+    same, single "block").
+    """
+    n = len(block_starts)
+    unique_starts = np.unique(block_starts)
+    times = np.empty(n, dtype=float)
+    for i, start in enumerate(unique_starts):
+        mask = block_starts == start
+        count = int(mask.sum())
+        is_last = i == len(unique_starts) - 1
+        end = duration_sec if is_last else unique_starts[i + 1]
+        if end <= start:
+            end = start + 1e-3
+        times[mask] = np.linspace(start, end, count, endpoint=is_last)
+    return times
+
+
 def parse_gps_data(txt_content: str, duration_sec: float) -> pd.DataFrame:
     """Parses an exiftool -ee text dump into a [time, lat, lon, speed] DataFrame.
 
-    Speed is standardized to km/h (exiftool reports GPS Speed in m/s).
+    Speed is standardized to km/h -- see convert_speed_to_kmh for how the
+    source unit is determined rather than assumed.
     """
     data: list[dict] = []
     cur_lat, cur_lon = np.nan, np.nan
+    cur_block_start = 0.0
     for line in txt_content.splitlines():
+        m_block = _SAMPLE_TIME_RE.search(line)
+        if m_block:
+            cur_block_start = float(m_block.group(1))
+            continue
         m_spd = _SPEED_RE.search(line)
         if m_spd:
-            data.append({"speed": float(m_spd.group(1)) * 3.6, "lat": cur_lat, "lon": cur_lon})
+            value, unit = m_spd.groups()
+            data.append({
+                "speed": convert_speed_to_kmh(float(value), unit),
+                "lat": cur_lat, "lon": cur_lon,
+                "block_start": cur_block_start,
+            })
             continue
         m_lat = _LAT_RE.search(line)
         if m_lat:
@@ -98,9 +182,11 @@ def parse_gps_data(txt_content: str, duration_sec: float) -> pd.DataFrame:
     # Assign time from the *original* sample count (one exiftool line per
     # native GPS interval) before dropping (0,0) "no fix yet" rows -- doing
     # it after would compress the remaining samples' time axis, since
-    # linspace assumes even spacing across however many rows are left.
-    df["time"] = np.linspace(0, duration_sec, len(df))
-    df["speed"] = smooth_speed_outliers(df["speed"])
+    # per-block spacing assumes even distribution across however many rows
+    # are left in that block.
+    df["time"] = _assign_fix_times(df["block_start"].to_numpy(), duration_sec)
+    df = df.drop(columns="block_start")
+    df["speed"] = smooth_speed_outliers(df["speed"], time=df["time"])
     df = df[(df["lat"] != 0) & (df["lon"] != 0)].reset_index(drop=True)
     if len(df) < 2:
         return pd.DataFrame(columns=["time", "lat", "lon", "speed"])

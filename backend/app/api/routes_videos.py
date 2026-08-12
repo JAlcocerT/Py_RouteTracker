@@ -9,7 +9,7 @@ import pandas as pd
 from fastapi import APIRouter, Form, HTTPException, UploadFile
 
 from app.core.config import settings
-from app.core.ffmpeg_utils import get_video_duration
+from app.core.ffmpeg_utils import get_video_duration, get_video_fps
 from app.core.state import job_manager, video_store
 from app.core.video_store import VideoMeta
 from app.telemetry.sources.external_gpx import ExternalGpxSource
@@ -34,7 +34,7 @@ async def upload_video(
     gpx: Optional[UploadFile] = None,
     video_start_time: Optional[str] = Form(None),
     offset_sec: float = Form(0.0),
-    target_fps: float = Form(settings.default_target_fps),
+    target_fps: Optional[float] = Form(None),
 ):
     if source_type not in VALID_SOURCE_TYPES:
         raise HTTPException(400, f"source_type must be one of {VALID_SOURCE_TYPES}")
@@ -51,6 +51,19 @@ async def upload_video(
         duration_sec = get_video_duration(video_path)
     except Exception as exc:
         raise HTTPException(500, f"could not read video duration: {exc}") from exc
+
+    if target_fps is None:
+        # Default to the footage's own frame rate rather than a flat
+        # constant -- HUD frames are drawn one per telemetry row and
+        # composited 1:1 onto the trimmed clip, so matching the real rate
+        # means every video frame gets its own HUD frame instead of relying
+        # on ffmpeg's overlay filter to duplicate/drop frames to reconcile a
+        # mismatch. Falls back to the configured constant if ffprobe can't
+        # read it (e.g. an unusual container).
+        try:
+            target_fps = get_video_fps(video_path)
+        except Exception:
+            target_fps = settings.default_target_fps
 
     meta = VideoMeta(
         id=video_id,

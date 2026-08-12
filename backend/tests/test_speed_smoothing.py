@@ -40,6 +40,28 @@ def test_smooth_speed_outliers_short_series_is_a_noop():
     assert smooth_speed_outliers(speed).tolist() == [10.0, 20.0]
 
 
+def test_smooth_speed_outliers_window_scales_with_sample_rate():
+    """Regression test for the audit's #2 finding: a flat window=5 only
+    outvotes a burst of up to ~2 bad samples. A real GPS signal-loss burst
+    (a bridge, a tunnel, dense tree cover) at a GoPro-like ~20Hz native rate
+    routinely spans more samples than that -- passing `time` should widen
+    the window to actually cover it, where the flat default can't.
+    """
+    n = 30
+    baseline = 85.0
+    speed = pd.Series([baseline] * n, dtype=float)
+    burst_start, burst_len = 13, 4
+    speed.iloc[burst_start:burst_start + burst_len] = 300.0
+
+    time = np.arange(n) * 0.05  # 20 Hz
+
+    without_time = smooth_speed_outliers(speed.copy())
+    assert without_time.max() > 150  # flat window=5 can't outvote this burst
+
+    with_time = smooth_speed_outliers(speed.copy(), time=time)
+    assert with_time.max() < 100  # rate-derived window (~10 samples) can
+
+
 def test_smooth_speed_outliers_rejects_two_sample_burst():
     # A brief multipath dropout (e.g. passing under a bridge/netting on a
     # go-kart track) commonly glitches more than one consecutive GPS fix,

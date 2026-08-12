@@ -107,6 +107,102 @@ def test_upload_and_extract_telemetry(uploaded_video):
     assert meta["expires_at"] > meta["created_at"]
 
 
+def test_upload_respects_explicit_target_fps_override(monkeypatch, sample_gpx, tmp_path):
+    # regression test: target_fps used to always default to
+    # settings.default_target_fps; it's now Optional[None] server-side
+    # (falls back to the *video's own* fps when the caller omits it -- see
+    # test_upload_defaults_target_fps_to_video_fps below) -- an explicit
+    # caller-supplied value must still be honored exactly as before.
+    monkeypatch.setattr(routes_videos, "get_video_duration", lambda path: 120.0)
+
+    gpx_points = load_gpx_points(sample_gpx)
+    video_start_time = gpx_points["timestamp"].iloc[0] - timedelta(seconds=5)
+
+    with open(sample_gpx, "rb") as gpx_file:
+        resp = client.post(
+            "/api/videos",
+            files={
+                "video": ("clip.mp4", _test_video_bytes(tmp_path), "video/mp4"),
+                "gpx": ("track.gpx", gpx_file.read(), "application/gpx+xml"),
+            },
+            data={
+                "source_type": "external_gpx",
+                "video_start_time": video_start_time.isoformat(),
+                "target_fps": "5",
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    job = _wait_for_job(resp.json()["job_id"])
+    assert job["status"] == "done", job
+
+    points = client.get(f"/api/videos/{resp.json()['video_id']}/telemetry").json()["points"]
+    # one row per 1/target_fps step over the (mocked) 120s duration
+    assert len(points) == pytest.approx(120 * 5, abs=2)
+
+
+def test_upload_defaults_target_fps_to_video_fps(monkeypatch, sample_gpx, tmp_path):
+    # when the caller doesn't pass target_fps at all, it should come from
+    # the uploaded video's own frame rate rather than a flat constant
+    monkeypatch.setattr(routes_videos, "get_video_duration", lambda path: 120.0)
+    monkeypatch.setattr(routes_videos, "get_video_fps", lambda path: 8.0)
+
+    gpx_points = load_gpx_points(sample_gpx)
+    video_start_time = gpx_points["timestamp"].iloc[0] - timedelta(seconds=5)
+
+    with open(sample_gpx, "rb") as gpx_file:
+        resp = client.post(
+            "/api/videos",
+            files={
+                "video": ("clip.mp4", _test_video_bytes(tmp_path), "video/mp4"),
+                "gpx": ("track.gpx", gpx_file.read(), "application/gpx+xml"),
+            },
+            data={
+                "source_type": "external_gpx",
+                "video_start_time": video_start_time.isoformat(),
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    job = _wait_for_job(resp.json()["job_id"])
+    assert job["status"] == "done", job
+
+    points = client.get(f"/api/videos/{resp.json()['video_id']}/telemetry").json()["points"]
+    assert len(points) == pytest.approx(120 * 8.0, abs=2)
+
+
+def test_upload_falls_back_to_configured_default_fps_when_video_fps_unreadable(monkeypatch, sample_gpx, tmp_path):
+    # if ffprobe can't read the video's fps (unusual container, missing
+    # binary), upload must still succeed using the configured constant
+    # rather than failing the whole upload
+    monkeypatch.setattr(routes_videos, "get_video_duration", lambda path: 120.0)
+
+    def _boom(path):
+        raise RuntimeError("ffprobe exploded")
+
+    monkeypatch.setattr(routes_videos, "get_video_fps", _boom)
+
+    gpx_points = load_gpx_points(sample_gpx)
+    video_start_time = gpx_points["timestamp"].iloc[0] - timedelta(seconds=5)
+
+    with open(sample_gpx, "rb") as gpx_file:
+        resp = client.post(
+            "/api/videos",
+            files={
+                "video": ("clip.mp4", _test_video_bytes(tmp_path), "video/mp4"),
+                "gpx": ("track.gpx", gpx_file.read(), "application/gpx+xml"),
+            },
+            data={
+                "source_type": "external_gpx",
+                "video_start_time": video_start_time.isoformat(),
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    job = _wait_for_job(resp.json()["job_id"])
+    assert job["status"] == "done", job
+
+    points = client.get(f"/api/videos/{resp.json()['video_id']}/telemetry").json()["points"]
+    assert len(points) == pytest.approx(120 * settings.default_target_fps, abs=2)
+
+
 def test_health_reports_retention_window():
     resp = client.get("/api/health")
     assert resp.status_code == 200

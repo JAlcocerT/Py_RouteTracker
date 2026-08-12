@@ -11,7 +11,13 @@ import numpy as np
 import pandas as pd
 
 
-def smooth_speed_outliers(speed: pd.Series, window: int = 5, mad_threshold: float = 5.0) -> pd.Series:
+def smooth_speed_outliers(
+    speed: pd.Series,
+    window: int = 5,
+    mad_threshold: float = 5.0,
+    time: pd.Series | np.ndarray | None = None,
+    target_window_sec: float = 0.5,
+) -> pd.Series:
     """Rejects implausible GPS speed spikes with a Hampel filter (rolling
     median + median-absolute-deviation threshold).
 
@@ -35,7 +41,25 @@ def smooth_speed_outliers(speed: pd.Series, window: int = 5, mad_threshold: floa
     still fundamentally limited by "majority of the window must be good
     fixes" -- a dropout lasting more than about half the window can't be
     distinguished from a real sustained speed change by this alone.
+
+    `window` is a sample *count*, which only means something once you know
+    the sample *rate* -- and this module serves sources whose native rate
+    differs by more than an order of magnitude (a GoPro's ~18Hz GPS chip vs.
+    a phone/Garmin GPX track at ~0.5-1Hz). A flat window=5 covers ~280ms of
+    a GoPro track but 5-10s of a 1Hz GPX track: too narrow to outvote a
+    real, sub-second signal-loss burst (a bridge, a tunnel, dense tree
+    cover -- all commonly longer than 280ms) on the former, needlessly wide
+    on the latter. Passing `time` (each sample's own timestamp, in seconds)
+    derives the window from the *median sample interval* instead, so it
+    always spans roughly `target_window_sec` of real time regardless of
+    source. `window` is still the floor/fallback when `time` isn't given.
     """
+    if time is not None:
+        t = np.asarray(time, dtype=float)
+        if len(t) >= 2:
+            median_dt = np.median(np.diff(t))
+            if median_dt > 0:
+                window = max(3, round(target_window_sec / median_dt))
     if len(speed) < window:
         return speed
     median = speed.rolling(window, center=True, min_periods=1).median()

@@ -64,7 +64,7 @@ def compute_speed_kmh(df: pd.DataFrame) -> pd.Series:
 
     speed_ms = dist_m / dt
     speed_ms = np.nan_to_num(speed_ms, nan=0.0)
-    return smooth_speed_outliers(pd.Series(speed_ms * 3.6, index=df.index))
+    return smooth_speed_outliers(pd.Series(speed_ms * 3.6, index=df.index), time=seconds)
 
 
 class ExternalGpxSource:

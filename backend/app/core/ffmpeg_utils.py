@@ -24,6 +24,24 @@ def get_video_duration(video_path: Path) -> float:
     return float(out)
 
 
+def get_video_fps(video_path: Path) -> float:
+    """Real frame rate of the video's first video stream (e.g. 29.97 for a
+    30000/1001 NTSC-style rate). Used to default telemetry resampling to the
+    footage's own rate instead of a flat constant -- see
+    app.api.routes_videos.upload_video."""
+    require_binary("ffprobe")
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=r_frame_rate",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(video_path),
+    ]
+    out = subprocess.check_output(cmd).decode().strip()
+    num, _, den = out.partition("/")
+    return float(num) / float(den or 1)
+
+
 def get_video_resolution(video_path: Path) -> tuple[int, int]:
     """(width, height) of the video's first stream, in pixels."""
     require_binary("ffprobe")
