@@ -40,6 +40,14 @@ class Settings:
         self.worker_token = os.environ.get("ROUTETRACKER_WORKER_TOKEN", "").strip()
         self.worker_lease_minutes = float(os.environ.get("ROUTETRACKER_WORKER_LEASE_MINUTES", "30"))
 
+        # Diagnostic-only escape hatch: forces every parsed GoPro `GPS Speed`
+        # value to be treated as this unit instead of whatever unit token
+        # (or lack thereof) was actually parsed. Exists so a suspected wrong
+        # unit assumption can be tested end-to-end with a real render
+        # without editing code -- see backend/scripts/inspect_gps_speed.py
+        # and docs/speed-computation-audit.html. Leave unset in normal use.
+        self.speed_unit_override = os.environ.get("ROUTETRACKER_SPEED_UNIT_OVERRIDE", "").strip() or None
+
         for d in (self.upload_dir, self.cache_dir, self.output_dir, self.work_dir):
             d.mkdir(parents=True, exist_ok=True)
 

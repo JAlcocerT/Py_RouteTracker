@@ -34,12 +34,12 @@ def test_parse_gps_data_against_real_exiftool_dump(gopro_telemetry_txt):
 
     assert not df.empty
     assert list(df.columns) == ["time", "lat", "lon", "speed"]
-    # speeds were converted from m/s to km/h (source file starts near-stationary)
-    assert df["speed"].min() >= 0
-    # this fixture is a real go-kart session, genuine top speed ~85 km/h --
+    # exiftool already reports this fixture's GPS Speed in km/h (source file
+    # starts near-stationary); real recorded top speed here is ~23 km/h --
     # a much tighter ceiling than before is exactly the point: a wide "< 300"
     # ceiling let an unsmoothed single-sample GPS spike through unnoticed
-    assert df["speed"].max() < 100
+    assert df["speed"].min() >= 0
+    assert df["speed"].max() < 30
     assert df["time"].is_monotonic_increasing
     assert df["time"].max() == pytest.approx(533.0)
     # real GoPro coordinates from the fixture (~37.558N, ~-5.932W)
@@ -55,8 +55,8 @@ def test_parse_gps_data_empty_input():
 @pytest.mark.parametrize(
     "unit,expected_factor",
     [
-        ("", 3.6),          # GoPro's own bare-number GPMF convention -> m/s
-        ("m/s", 3.6),
+        ("", 1.0),          # exiftool's GoPro.pm already converts m/s->km/h
+        ("m/s", 3.6),       # an explicitly-labeled raw m/s value still needs it
         ("km/h", 1.0),
         ("kmh", 1.0),
         ("kph", 1.0),
@@ -70,10 +70,11 @@ def test_convert_speed_to_kmh_uses_the_actual_unit(unit, expected_factor):
     assert convert_speed_to_kmh(10.0, unit) == pytest.approx(10.0 * expected_factor)
 
 
-def test_convert_speed_to_kmh_unknown_unit_falls_back_to_ms_assumption():
-    # an unrecognized unit token still gets converted (not dropped) using
-    # the historical m/s assumption, since that's the best guess available
-    assert convert_speed_to_kmh(10.0, "furlongs/fortnight") == pytest.approx(36.0)
+def test_convert_speed_to_kmh_unknown_unit_falls_back_to_kmh_assumption():
+    # an unrecognized unit token still gets used (not dropped), falling back
+    # to "already km/h" -- exiftool's actual native GoPro output, and the
+    # common case this app targets
+    assert convert_speed_to_kmh(10.0, "furlongs/fortnight") == pytest.approx(10.0)
 
 
 def _fix_lines(speed_text: str, n: int, lat="37 deg 33' 30.60\" N", lon="5 deg 55' 55.92\" W") -> list[str]:
@@ -87,32 +88,36 @@ def _fix_lines(speed_text: str, n: int, lat="37 deg 33' 30.60\" N", lon="5 deg 5
     return lines
 
 
-def test_parse_gps_data_regression_unit_suffix_is_not_silently_reinterpreted_as_ms():
-    """Regression test for the audit's #1 finding: a GPS Speed line that
-    already carries its own unit (as ExifTool prints a standard, non-GoPro
-    GPSSpeed tag) must be converted using *that* unit, not blindly
-    multiplied by 3.6 as if it were GoPro's unit-less m/s convention -- that
-    silent double-conversion is what made speed read ~3.6x too high.
+def test_parse_gps_data_regression_unit_suffix_is_not_silently_reinterpreted_as_kmh():
+    """Regression test: a GPS Speed line that carries its own explicit unit
+    (e.g. a standard, non-GoPro GPSSpeed tag with a GPSSpeedRef-declared
+    unit) must be converted using *that* unit, not treated as exiftool's
+    native already-km/h GoPro output.
     """
-    lines = _fix_lines("42.0 km/h", n=3)
+    lines = _fix_lines("42.0 m/s", n=3)
     content = "\n".join(lines)
 
     df = parse_gps_data(content, duration_sec=10.0)
 
     assert not df.empty
-    assert df["speed"].tolist() == pytest.approx([42.0] * len(df), abs=0.5)
+    assert df["speed"].tolist() == pytest.approx([42.0 * 3.6] * len(df), abs=0.5)
 
 
-def test_parse_gps_data_bare_number_still_assumed_ms():
-    # unchanged behavior for GoPro's own real format: a bare number with no
-    # unit suffix is still treated as m/s
+def test_parse_gps_data_bare_number_is_already_kmh():
+    """Regression test for the audit's #1 finding: exiftool's GoPro.pm
+    module already converts GPMF's raw m/s speed to km/h before printing
+    the `GPS Speed` line (both its GPS5 and GPS9 tag tables define
+    `ValueConv => '$val * 3.6'`). Re-multiplying that bare number by 3.6
+    again is exactly the silent double-conversion that made displayed speed
+    read ~3.6x too high.
+    """
     lines = _fix_lines("10.0", n=3)
     content = "\n".join(lines)
 
     df = parse_gps_data(content, duration_sec=10.0)
 
     assert not df.empty
-    assert df["speed"].tolist() == pytest.approx([36.0] * len(df), abs=0.5)
+    assert df["speed"].tolist() == pytest.approx([10.0] * len(df), abs=0.5)
 
 
 def test_parse_gps_data_regression_uses_per_block_sample_time():

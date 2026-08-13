@@ -4,13 +4,15 @@ Ported from legacy/overlay/racing_hud_v7.py:61-151 and legacy/overlay/lap_timer_
 The GPMD ACCL struct layout is unchanged, and every knob is now a function
 argument instead of a module-level constant, with paths injected rather than
 hardcoded to one developer's machine. GPS speed parsing and per-fix timing
-were tightened after an audit found the original blindly assumed every `GPS
-Speed` line was a bare, unit-less m/s value (true for GoPro's own GPMF
-stream, but silently wrong -- and undetectable by outlier smoothing, since
-it's a uniform bias, not a per-sample anomaly -- for anything that instead
-reports a value with a unit suffix), and assumed fixes were spaced perfectly
-evenly across the whole video rather than using the per-block timing the
-dump already carries. See docs/speed-computation-audit.html.
+were tightened after an audit found the original blindly re-multiplied every
+`GPS Speed` line by 3.6 assuming it was a bare, unit-less m/s value --
+exiftool's own GoPro.pm module already performs that exact m/s->km/h
+conversion before printing the line (see convert_speed_to_kmh), so this was
+a silent double-conversion inflating every reading by ~3.6x, undetectable by
+outlier smoothing since it's a uniform bias, not a per-sample anomaly. Also
+assumed fixes were spaced perfectly evenly across the whole video rather
+than using the per-block timing the dump already carries. See
+docs/speed-computation-audit.html.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from app.core.binaries import require_binary
+from app.core.config import settings
 from app.core.ffmpeg_utils import get_video_duration  # re-exported for callers that only import this module
 from app.telemetry.resample import resample_to_grid, smooth_speed_outliers
 from app.telemetry.sources.base import TelemetryResult, empty_result
@@ -48,14 +51,19 @@ _LON_RE = re.compile(r"GPS Longitude\s+:\s+(.+)")
 # across the whole session -- see _assign_fix_times.
 _SAMPLE_TIME_RE = re.compile(r"Sample Time\s+:\s+([\d.]+)\s*s")
 
-# GoPro's own GPMF GPS5 stream reports speed as a bare number in m/s -- no
-# unit suffix, which is what an empty string here maps to. exiftool prints a
-# *standard* EXIF/QuickTime GPSSpeed tag (as opposed to GoPro's proprietary
-# stream) with its GPSSpeedRef-declared unit appended instead, so a dump
-# from a different camera/re-encoder can legitimately show up already
-# labeled in km/h or mph.
+# exiftool's own GoPro.pm module ALREADY converts GPMF's raw m/s speed to
+# km/h before it ever prints the "GPS Speed" line -- both the GPS5 (Hero5/6/9)
+# and GPS9 (Hero11+) tag tables define GPSSpeed with `ValueConv => '$val *
+# 3.6'` and the note "stored as m/s but converted to km/h when extracted".
+# So a bare number here (no unit suffix, which is what an empty string maps
+# to) is already km/h -- re-multiplying it by 3.6 is exactly the silent
+# double-conversion that made displayed speed read ~3.6x too high; see
+# docs/speed-computation-audit.html. A *different* tool/re-encoder that
+# writes a standard EXIF/QuickTime GPSSpeed tag with an explicit
+# GPSSpeedRef-declared unit suffix (km/h, mph, m/s, ...) is still handled
+# correctly via that unit.
 _SPEED_UNIT_TO_KMH_FACTOR = {
-    "": 3.6,  # bare number -> assume GoPro's own m/s convention
+    "": 1.0,  # bare number -> exiftool already converted it to km/h
     "m/s": 3.6,
     "km/h": 1.0,
     "kmh": 1.0,
@@ -69,12 +77,13 @@ _SPEED_UNIT_TO_KMH_FACTOR = {
 
 def convert_speed_to_kmh(value: float, unit: str) -> float:
     """Converts a parsed GPS-speed number to km/h based on its *actual*
-    unit instead of always assuming m/s. An unrecognized/garbled unit token
-    falls back to the historical m/s assumption rather than dropping the
-    sample -- but that fallback is exactly the case worth surfacing if
-    displayed speed still looks wrong; see docs/speed-computation-audit.html.
+    unit instead of blindly assuming one. An unrecognized/garbled unit token
+    falls back to the km/h assumption (exiftool's own native GoPro output),
+    since that's the common case this app targets -- see
+    docs/speed-computation-audit.html.
     """
-    factor = _SPEED_UNIT_TO_KMH_FACTOR.get(unit.strip().lower(), 3.6)
+    unit = settings.speed_unit_override or unit
+    factor = _SPEED_UNIT_TO_KMH_FACTOR.get(unit.strip().lower(), 1.0)
     return value * factor
 
 
