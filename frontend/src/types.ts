@@ -51,7 +51,6 @@ export interface WidgetSelection {
   speedo: boolean
   gg: boolean
   minimap: boolean
-  session_graph: boolean
 }
 
 export interface RenderStyle {

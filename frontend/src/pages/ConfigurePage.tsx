@@ -13,7 +13,7 @@ interface ConfigurePageProps {
   onRenderStarted: (jobId: string, claimToken: string) => void
 }
 
-const DEFAULT_WIDGETS: WidgetSelection = { speedo: true, gg: true, minimap: true, session_graph: true }
+const DEFAULT_WIDGETS: WidgetSelection = { speedo: true, gg: true, minimap: true }
 const DEFAULT_STYLE: RenderStyle = { theme: 'cyberpunk', max_expected_speed_kmh: 85, limit_g: 1.5 }
 
 export function ConfigurePage({ videoId, videoFile, onRenderStarted }: ConfigurePageProps) {

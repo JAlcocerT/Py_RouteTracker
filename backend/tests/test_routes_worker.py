@@ -104,7 +104,7 @@ def uploaded_and_queued_render(monkeypatch, sample_gpx, tmp_path):
 
     render_resp = client.post(
         f"/api/videos/{video_id}/render",
-        json={"trim_start": 0.0, "trim_end": 20.0, "widgets": {"speedo": True, "gg": False, "minimap": False, "session_graph": False}},
+        json={"trim_start": 0.0, "trim_end": 20.0, "widgets": {"speedo": True, "gg": False, "minimap": False}},
     )
     assert render_resp.status_code == 200, render_resp.text
     job_id = render_resp.json()["job_id"]

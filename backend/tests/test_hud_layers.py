@@ -3,7 +3,21 @@ import pandas as pd
 import pytest
 from PIL import Image
 
-from app.render.hud_layers import HudRenderer, RenderConfig, config_for_resolution
+from app.render.hud_layers import HudRenderer, RenderConfig, _format_lap_time, config_for_resolution
+
+
+@pytest.mark.parametrize(
+    "seconds,expected",
+    [
+        (0.0, "0:00.00"),
+        (5.4, "0:05.40"),
+        (61.95, "1:01.95"),  # racing-timing mm:ss.cc, not bare "61.95s"
+        (59.998, "1:00.00"),  # centisecond rounding must carry into seconds
+        (125.0, "2:05.00"),
+    ],
+)
+def test_format_lap_time(seconds, expected):
+    assert _format_lap_time(seconds) == expected
 
 
 def _synthetic_df(n: int = 20) -> pd.DataFrame:
@@ -41,13 +55,12 @@ def test_draw_frame_all_widgets_enabled(tmp_path):
 
 def test_disabled_widgets_are_hidden(tmp_path):
     df = _synthetic_df()
-    config = RenderConfig(enable_gg=False, enable_minimap=False, enable_session_graph=False, width_px=320, height_px=180, dpi=80)
+    config = RenderConfig(enable_gg=False, enable_minimap=False, width_px=320, height_px=180, dpi=80)
     renderer = HudRenderer(df, lap_indices=[], config=config)
     try:
         assert renderer.ax_spd.get_visible()
         assert not renderer.ax_gg.get_visible()
         assert not renderer.ax_map.get_visible()
-        assert not renderer.ax_gph.get_visible()
         assert not hasattr(renderer, "gg_ball")
     finally:
         renderer.close()

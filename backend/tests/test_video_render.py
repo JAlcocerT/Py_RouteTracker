@@ -94,7 +94,7 @@ def test_prepare_then_execute_matches_render_and_composite(tmp_path):
     duration = get_video_duration(source)
 
     df = _synthetic_df(int(duration * 10))
-    config = RenderConfig(width_px=160, height_px=90, dpi=60, enable_gg=False, enable_minimap=False, enable_session_graph=False)
+    config = RenderConfig(width_px=160, height_px=90, dpi=60, enable_gg=False, enable_minimap=False)
 
     combined_out = tmp_path / "combined.mp4"
     combined_progress = []
@@ -135,7 +135,7 @@ def test_execute_prepared_render_rescales_canvas_to_real_video_resolution(tmp_pa
     _make_test_video(source, duration=2, size="320x180", rate=10)
     duration = get_video_duration(source)
     df = _synthetic_df(int(duration * 10))
-    config = RenderConfig(enable_gg=False, enable_minimap=False, enable_session_graph=False)
+    config = RenderConfig(enable_gg=False, enable_minimap=False)
 
     prepared = prepare_render_job(source, df, [], trim_start=0.0, trim_end=duration, work_dir=tmp_path / "work")
     out = tmp_path / "out.mp4"
@@ -157,7 +157,7 @@ def test_prepare_render_job_output_is_reusable_by_a_different_process_worth_of_s
     _make_test_video(source, duration=3, rate=10)
     duration = get_video_duration(source)
     df = _synthetic_df(int(duration * 10))
-    config = RenderConfig(width_px=160, height_px=90, dpi=60, enable_gg=False, enable_minimap=False, enable_session_graph=False)
+    config = RenderConfig(width_px=160, height_px=90, dpi=60, enable_gg=False, enable_minimap=False)
 
     prepared = prepare_render_job(source, df, [], trim_start=0.0, trim_end=duration, work_dir=tmp_path / "work")
 

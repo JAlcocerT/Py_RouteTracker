@@ -12,7 +12,6 @@ const WIDGET_LABELS: { key: keyof WidgetSelection; label: string; hint?: string 
   { key: 'speedo', label: 'Speedometer + lap timer' },
   { key: 'gg', label: 'G-G diagram', hint: 'needs accelerometer data' },
   { key: 'minimap', label: 'Minimap' },
-  { key: 'session_graph', label: 'Session speed graph' },
 ]
 
 export function WidgetPicker({ widgets, onWidgetsChange, style, onStyleChange, hasAccel }: WidgetPickerProps) {

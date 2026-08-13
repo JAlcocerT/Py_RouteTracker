@@ -1,8 +1,12 @@
 """HUD drawing: ported from legacy/overlay/racing_hud_v7.py:252-338.
 
-Three real changes from the original:
-  1. Every widget (speed arc, G-G diagram, minimap, session graph) is
-     independently toggle-able via RenderConfig instead of always-on.
+Four real changes from the original:
+  1. Every widget (speedo, G-G diagram, minimap) is independently
+     toggle-able via RenderConfig instead of always-on. The original's
+     fourth widget, a session-wide speed graph running along the bottom
+     edge, is gone entirely -- on real close-up POV footage (steering
+     wheel/hands/knees filling the lower-center of frame) it had nowhere
+     clear to sit and just added visual noise on top of the cockpit.
   2. The figure is drawn with a transparent background (`transparent=True`
      on savefig, no `fig.patch.set_facecolor('black')`) and frames are
      saved as individual PNGs rather than encoded straight to video —
@@ -65,7 +69,6 @@ class RenderConfig:
     enable_speedo: bool = True
     enable_gg: bool = True
     enable_minimap: bool = True
-    enable_session_graph: bool = True
     max_expected_speed_kmh: float = 85.0
     limit_g: float = 1.5
     theme: str = "cyberpunk"  # "cyberpunk" or "dark_background"
@@ -74,6 +77,20 @@ class RenderConfig:
     dpi: int = 100
     gg_trail_frames: int = 15
     minimap_trail_frames: int = 150
+
+
+def _format_lap_time(seconds: float) -> str:
+    """m:ss.cc (minutes:seconds.centiseconds), the standard racing-timing
+    format -- not the bare `ss.dd` a plain `f"{seconds:.2f}"` gives, which
+    reads as "61.95" for a 1:01.95 lap instead of the familiar clock shape.
+    Rounds via integer centiseconds so e.g. 59.998s correctly carries into
+    "1:00.00" instead of rounding display digits independently and
+    printing "0:60.00".
+    """
+    total_cs = int(round(seconds * 100))
+    minutes, rem_cs = divmod(total_cs, 6000)
+    secs, centis = divmod(rem_cs, 100)
+    return f"{minutes}:{secs:02d}.{centis:02d}"
 
 
 # Every rect fraction and pt-sized font in this module was tuned by eye
@@ -113,9 +130,9 @@ _OUTLINE = [pe.withStroke(linewidth=3, foreground="black")]
 # against arbitrary, unpredictable footage (bright sky, glare, light-colored
 # kerbs/barriers) that a bare glow/outline alone can't reliably beat -- see
 # the mockups compared against a synthetic busy background before this
-# layout was picked. Corner placement (bottom-left/right, tied together by
-# a thin strip along the very bottom edge) keeps the center of the frame,
-# where the actual footage subject usually is, uncovered.
+# layout was picked. Corner placement keeps the center of the frame, where
+# the actual footage subject (and, on close-up POV shots, the cockpit)
+# usually is, uncovered.
 _PANEL_FACE_RGB = (0.02, 0.05, 0.06)
 _PANEL_EDGE = (1, 1, 1, 0.18)
 
@@ -124,13 +141,19 @@ _PANEL_EDGE = (1, 1, 1, 0.18)
 # this is a considered visual design, not a per-render knob callers should
 # reasonably want to override (unlike the toggles/thresholds on
 # RenderConfig itself).
-_LEFT_PANEL_RECT = (0.015, 0.03, 0.30, 0.40)
-_RIGHT_PANEL_RECT = (0.685, 0.03, 0.30, 0.40)
-_STRIP_RECT = (0.015, 0.445, 0.97, 0.09)
-_SPEEDO_RECT = [0.02, 0.20, 0.29, 0.27]
-_GG_RECT = [0.045, 0.045, 0.10, 0.14]
-_MINIMAP_RECT = [0.71, 0.06, 0.25, 0.36]
-_SESSION_RECT = [0.03, 0.455, 0.94, 0.07]
+#
+# All three widgets sit in a top corner or the bottom-left corner, never
+# the bottom-center/right: on close-up POV footage (steering wheel, hands,
+# knees) that's the area most reliably occluded by the cockpit itself, and
+# the previous layout (speedo+G-G stacked lower-left, minimap lower-right)
+# put every widget right on top of that occlusion. Top-left/top-right are
+# open track/sky in effectively every helmet/chest-mount POV shot.
+_SPEEDO_PANEL_RECT = (0.015, 0.56, 0.30, 0.40)
+_GG_PANEL_RECT = (0.015, 0.035, 0.17, 0.21)
+_MINIMAP_PANEL_RECT = (0.685, 0.56, 0.30, 0.40)
+_SPEEDO_RECT = [0.02, 0.58, 0.29, 0.36]
+_GG_RECT = [0.03, 0.05, 0.15, 0.19]
+_MINIMAP_RECT = [0.70, 0.58, 0.28, 0.36]
 
 
 class HudRenderer:
@@ -167,13 +190,11 @@ class HudRenderer:
         self.ax_spd = self.fig.add_axes(_SPEEDO_RECT)
         self.ax_gg = self.fig.add_axes(_GG_RECT)
         self.ax_map = self.fig.add_axes(_MINIMAP_RECT)
-        self.ax_gph = self.fig.add_axes(_SESSION_RECT)
 
         for ax, enabled in (
             (self.ax_spd, cfg.enable_speedo),
             (self.ax_gg, cfg.enable_gg),
             (self.ax_map, cfg.enable_minimap),
-            (self.ax_gph, cfg.enable_session_graph),
         ):
             ax.patch.set_alpha(0.0)
             ax.axis("off")
@@ -185,8 +206,6 @@ class HudRenderer:
             self._build_gg()
         if cfg.enable_minimap:
             self._build_minimap()
-        if cfg.enable_session_graph:
-            self._build_session_graph()
 
         if _HAS_CYBERPUNK and style == "cyberpunk" and cfg.enable_speedo:
             # add_glow_effects() also calls add_underglow(), which fills the
@@ -202,10 +221,7 @@ class HudRenderer:
         cached background like the rest of a widget's non-moving pixels.
         Added to the figure before any widget axes so they draw underneath."""
         cfg = self.config
-        left_needed = cfg.enable_speedo or cfg.enable_gg
-        right_needed = cfg.enable_minimap
-        strip_needed = cfg.enable_session_graph
-        if not (left_needed or right_needed or strip_needed):
+        if not (cfg.enable_speedo or cfg.enable_gg or cfg.enable_minimap):
             return
 
         ax = self.fig.add_axes([0, 0, 1, 1])
@@ -213,12 +229,12 @@ class HudRenderer:
         ax.set_ylim(0, 1)
         ax.axis("off")
         ax.patch.set_alpha(0)
-        if left_needed:
-            ax.add_patch(self._panel_patch(_LEFT_PANEL_RECT))
-        if right_needed:
-            ax.add_patch(self._panel_patch(_RIGHT_PANEL_RECT))
-        if strip_needed:
-            ax.add_patch(self._panel_patch(_STRIP_RECT, radius=0.015, alpha=0.35))
+        if cfg.enable_speedo:
+            ax.add_patch(self._panel_patch(_SPEEDO_PANEL_RECT))
+        if cfg.enable_gg:
+            ax.add_patch(self._panel_patch(_GG_PANEL_RECT))
+        if cfg.enable_minimap:
+            ax.add_patch(self._panel_patch(_MINIMAP_PANEL_RECT))
 
     @staticmethod
     def _panel_patch(rect: tuple[float, float, float, float], radius: float = 0.02, alpha: float = 0.42) -> FancyBboxPatch:
@@ -230,19 +246,62 @@ class HudRenderer:
         )
 
     def _build_speedo(self) -> None:
+        """A real gauge -- redline zones and tick marks you can read a value
+        against, plus a needle -- rather than the original's single
+        recolouring arc, which read more like a loading bar than a
+        speedometer since it had nothing static to compare the fill to."""
+        cfg = self.config
+        cx, cy, rad = 0.5, 0.30, 0.33
+        self._spd_center = (cx, cy)
+        self._spd_radius = rad
         theta = np.linspace(np.pi, 0, 100)
-        rad = 0.36
-        self._arc_x = 0.5 + rad * np.cos(theta)
-        self._arc_y = 0.32 + rad * np.sin(theta)
-        self.ax_spd.plot(self._arc_x, self._arc_y, color="white", lw=2, alpha=0.15)
-        self.sp_arc, = self.ax_spd.plot([], [], lw=9, solid_capstyle="round", path_effects=_OUTLINE)
-        self.sp_txt = self.ax_spd.text(0.5, 0.30, "", fontsize=42, color="white", ha="center", fontweight="bold", path_effects=_OUTLINE)
-        self.ax_spd.text(0.5, 0.16, "KM/H", fontsize=13, color="#00ff9f", ha="center", fontweight="bold", path_effects=_OUTLINE)
-        self.lap_txt = self.ax_spd.text(0.06, 0.90, "LAP", fontsize=16, color="cyan", ha="left", fontweight="bold", path_effects=_OUTLINE)
-        self.last_txt = self.ax_spd.text(0.94, 0.90, "LAST", fontsize=13, color="yellow", ha="right", fontweight="bold", path_effects=_OUTLINE)
+        self._arc_x = cx + rad * np.cos(theta)
+        self._arc_y = cy + rad * np.sin(theta)
+
+        # Static redline-zone track: green/yellow/red bands behind
+        # everything else, so the needle has a fixed reference to read
+        # against instead of just an abstract 0-1 fill.
+        for lo, hi, color in (
+            (0.0, 0.60, "#00ff9f"),
+            (0.60, 0.85, "#ffd400"),
+            (0.85, 1.0, "#ff0055"),
+        ):
+            zt = np.linspace(np.pi * (1 - lo), np.pi * (1 - hi), 24)
+            self.ax_spd.plot(cx + rad * np.cos(zt), cy + rad * np.sin(zt),
+                              color=color, lw=12, alpha=0.20, solid_capstyle="butt")
+
+        # Static tick marks every 10% of the configured max speed, with a
+        # numeric label on every other (major) tick.
+        for frac in np.linspace(0, 1, 11):
+            ang = np.pi * (1 - frac)
+            major = round(frac * 10) % 2 == 0
+            r0 = rad - (0.05 if major else 0.03)
+            self.ax_spd.plot(
+                [cx + r0 * np.cos(ang), cx + (rad + 0.012) * np.cos(ang)],
+                [cy + r0 * np.sin(ang), cy + (rad + 0.012) * np.sin(ang)],
+                color="white", lw=1.6 if major else 1.0, alpha=0.6 if major else 0.3,
+            )
+            if major:
+                lx, ly = cx + (rad + 0.085) * np.cos(ang), cy + (rad + 0.085) * np.sin(ang)
+                self.ax_spd.text(
+                    lx, ly, f"{int(round(frac * cfg.max_expected_speed_kmh))}",
+                    fontsize=8, color="white", alpha=0.65, ha="center", va="center",
+                )
+
+        # Dynamic accent arc (how far round we are, colour-matched to the
+        # current zone) and the needle, the two moving indicators.
+        self.sp_arc, = self.ax_spd.plot([], [], lw=4, solid_capstyle="round", alpha=0.9, path_effects=_OUTLINE)
+        self.sp_needle, = self.ax_spd.plot([], [], color="white", lw=2.4, solid_capstyle="round", zorder=9, path_effects=_OUTLINE)
+        self.ax_spd.add_patch(plt.Circle((cx, cy), 0.026, facecolor="#12141a", edgecolor="white", lw=1.3, zorder=10))
+
+        self.sp_txt = self.ax_spd.text(cx, cy - 0.15, "", fontsize=32, color="white", ha="center", va="center", fontweight="bold", path_effects=_OUTLINE)
+        self.ax_spd.text(cx, cy - 0.235, "KM/H", fontsize=10, color="#00ff9f", ha="center", va="center", fontweight="bold", path_effects=_OUTLINE)
+
+        self.lap_txt = self.ax_spd.text(0.03, 0.95, "", fontsize=14, color="cyan", ha="left", va="center", fontweight="bold", path_effects=_OUTLINE)
+        self.last_txt = self.ax_spd.text(0.97, 0.95, "", fontsize=12, color="yellow", ha="right", va="center", fontweight="bold", path_effects=_OUTLINE)
         self.ax_spd.set_xlim(0, 1)
         self.ax_spd.set_ylim(0, 1)
-        self._dynamic_artists += [self.sp_arc, self.sp_txt, self.lap_txt, self.last_txt]
+        self._dynamic_artists += [self.sp_arc, self.sp_needle, self.sp_txt, self.lap_txt, self.last_txt]
 
     def _build_gg(self) -> None:
         cfg = self.config
@@ -265,21 +324,6 @@ class HudRenderer:
         self.map_tail, = self.ax_map.plot([], [], color="#00ff9f", lw=3, alpha=0.9, path_effects=_OUTLINE)
         self._dynamic_artists += [self.map_dot, self.map_tail]
 
-    def _build_session_graph(self) -> None:
-        # A thin strip pinned along the bottom edge, not a full-height
-        # panel -- there's no room for an axis title here, and the graph's
-        # own contrasting color against the dim static trace already reads
-        # as "this is the session telemetry" without one.
-        self.ax_gph.plot(self.df["time"], self.df["speed"], color="white", alpha=0.25, lw=1)
-        for i in self.lap_indices:
-            self.ax_gph.axvline(self.df.iloc[i]["time"], color="yellow", ls="--", alpha=0.35)
-        self.gph_line, = self.ax_gph.plot([], [], color="#00ff9f", lw=2.2, path_effects=_OUTLINE)
-        self.gph_dot, = self.ax_gph.plot([], [], "o", color="#ff0055", ms=6, mec="white")
-        self.ax_gph.set_xlim(self.df["time"].min(), self.df["time"].max())
-        top = self.df["speed"].max()
-        self.ax_gph.set_ylim(0, top * 1.1 if top > 0 else 1)
-        self._dynamic_artists += [self.gph_line, self.gph_dot]
-
     def draw_frame(self, f: int) -> None:
         if f >= len(self.df):
             return
@@ -291,12 +335,19 @@ class HudRenderer:
             self.sp_txt.set_text(f"{int(v)}")
             r = min(v / cfg.max_expected_speed_kmh, 1.0)
             idx = int(r * 100)
-            color = "#00ff9f" if r < 0.5 else "#ffff00" if r < 0.8 else "#ff0055"
+            color = "#00ff9f" if r < 0.60 else "#ffd400" if r < 0.85 else "#ff0055"
             self.sp_arc.set_data(self._arc_x[:idx], self._arc_y[:idx])
             self.sp_arc.set_color(color)
+
+            cx, cy = self._spd_center
+            ang = np.pi * (1 - r)
+            tip = self._spd_radius - 0.055
+            self.sp_needle.set_data([cx, cx + tip * np.cos(ang)], [cy, cy + tip * np.sin(ang)])
+            self.sp_needle.set_color(color)
+
             self.lap_txt.set_text(f"LAP {int(row.get('lap', 0))}")
             last_lap = row.get("last_lap_s", 0.0)
-            self.last_txt.set_text(f"LAST: {last_lap:.2f}s" if last_lap > 0 else "")
+            self.last_txt.set_text(f"LAST {_format_lap_time(last_lap)}" if last_lap > 0 else "")
 
         if cfg.enable_gg:
             hist = self.df.iloc[max(0, f - cfg.gg_trail_frames):f + 1]
@@ -310,11 +361,6 @@ class HudRenderer:
             self.map_dot.set_data([row["lon"]], [row["lat"]])
             mtail = self.df.iloc[max(0, f - cfg.minimap_trail_frames):f + 1]
             self.map_tail.set_data(mtail["lon"], mtail["lat"])
-
-        if cfg.enable_session_graph:
-            gph = self.df.iloc[:f + 1]
-            self.gph_line.set_data(gph["time"], gph["speed"])
-            self.gph_dot.set_data([row["time"]], [row["speed"]])
 
     def save_frame(self, path: Path) -> None:
         """Captures the current frame via blitting instead of `savefig` --

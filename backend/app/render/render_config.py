@@ -19,7 +19,6 @@ def render_config_from_payload(payload: dict) -> RenderConfig:
         enable_speedo=widgets["speedo"],
         enable_gg=widgets["gg"],
         enable_minimap=widgets["minimap"],
-        enable_session_graph=widgets["session_graph"],
         max_expected_speed_kmh=style["max_expected_speed_kmh"],
         limit_g=style["limit_g"],
         theme=style["theme"],

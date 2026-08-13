@@ -241,7 +241,7 @@ def test_laps_compare_before_detection_is_404(uploaded_video):
 def test_render_job_lifecycle(uploaded_video):
     resp = client.post(
         f"/api/videos/{uploaded_video}/render",
-        json={"trim_start": 0.0, "trim_end": 20.0, "widgets": {"speedo": True, "gg": False, "minimap": False, "session_graph": False}},
+        json={"trim_start": 0.0, "trim_end": 20.0, "widgets": {"speedo": True, "gg": False, "minimap": False}},
     )
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["job_id"]

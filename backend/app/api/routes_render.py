@@ -16,7 +16,6 @@ class WidgetSelection(BaseModel):
     speedo: bool = True
     gg: bool = True
     minimap: bool = True
-    session_graph: bool = True
 
 
 class RenderStyle(BaseModel):
