@@ -102,6 +102,7 @@ def test_enqueue_then_claim_next_round_trip(tmp_path):
     assert claimed.status == "running"
     assert claimed.worker_id == "friend-laptop"
     assert claimed.payload == {"video_id": "abc", "trim_start": 0.0, "trim_end": 20.0}
+    assert claimed.lease_id  # minted fresh on claim -- see routes_worker.py's fencing
 
 
 def test_claim_next_never_returns_the_same_job_twice(tmp_path):
@@ -205,6 +206,27 @@ def test_requeue_stale_leaves_recently_updated_jobs_alone(tmp_path):
     assert job.worker_id == "active-worker"
 
 
+def test_requeue_stale_clears_lease_id_so_the_original_worker_cant_finish_late(tmp_path):
+    """The scenario routes_worker.py's fencing exists for: worker A goes
+    quiet, gets requeued, and worker B claims the same job -- A's lease_id
+    must no longer match anything, even before B claims (closing the gap
+    between the requeue and the reclaim), so a late report from A can't be
+    mistaken for a report from whoever's actually holding the job now."""
+    manager = JobManager(tmp_path / "jobs.db")
+    job_id = manager.create_job("render")
+    manager.enqueue(job_id, {"video_id": "abc"})
+    manager.release(job_id)
+    stale_claim = manager.claim_next("render", worker_id="worker-a")
+    old_lease_id = stale_claim.lease_id
+
+    manager.requeue_stale("render", lease_seconds=-1)
+    assert manager.get_job(job_id).lease_id is None
+
+    fresh_claim = manager.claim_next("render", worker_id="worker-b")
+    assert fresh_claim.lease_id != old_lease_id
+    assert manager.get_job(job_id).lease_id == fresh_claim.lease_id
+
+
 # --- job-scoped claim (claim_specific), for per-upload self-render tokens ---
 
 
@@ -220,6 +242,7 @@ def test_claim_specific_claims_the_requested_job(tmp_path):
     assert claimed.status == "running"
     assert claimed.worker_id == "self"
     assert claimed.claim_token == "secret-for-this-job"
+    assert claimed.lease_id
 
 
 def test_claim_specific_returns_none_for_unknown_job(tmp_path):

@@ -8,6 +8,7 @@ to inspect by hand while developing.
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -40,6 +41,11 @@ class VideoStore:
     def __init__(self, upload_dir: Path, cache_dir: Path):
         self.upload_dir = Path(upload_dir)
         self.cache_dir = Path(cache_dir)
+        # Guards read-modify-write of meta.json against concurrent requests
+        # for the same video (e.g. two renders queued close together) --
+        # without it, one caller's save can silently discard a field change
+        # made by the other in between the other's read and write.
+        self._lock = threading.Lock()
 
     def new_id(self) -> str:
         return str(uuid.uuid4())
@@ -62,13 +68,31 @@ class VideoStore:
         return VideoMeta(**json.loads(path.read_text()))
 
     def update(self, video_id: str, **fields) -> VideoMeta:
-        meta = self.get(video_id)
-        if meta is None:
-            raise KeyError(video_id)
-        for k, v in fields.items():
-            setattr(meta, k, v)
-        self.save(meta)
-        return meta
+        with self._lock:
+            meta = self.get(video_id)
+            if meta is None:
+                raise KeyError(video_id)
+            for k, v in fields.items():
+                setattr(meta, k, v)
+            self.save(meta)
+            return meta
+
+    def append_render_job_id(self, video_id: str, job_id: str) -> VideoMeta:
+        """Atomically appends to render_job_ids under the store's lock.
+        Unlike `update()`, whose caller must already hold the field's final
+        value, this reads the current list itself right before appending --
+        `update(video_id, render_job_ids=[*meta.render_job_ids, job_id])`
+        would race two renders queued for the same video close together,
+        since both callers could compute their new list from the same
+        stale snapshot and the second save would silently drop the first
+        job's id."""
+        with self._lock:
+            meta = self.get(video_id)
+            if meta is None:
+                raise KeyError(video_id)
+            meta.render_job_ids = [*meta.render_job_ids, job_id]
+            self.save(meta)
+            return meta
 
     # --- cached artifact paths ---
     def telemetry_path(self, video_id: str) -> Path:

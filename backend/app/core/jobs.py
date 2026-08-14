@@ -44,6 +44,7 @@ class JobRecord:
     worker_id: str | None = None
     claim_token: str | None = None
     released: bool = False
+    lease_id: str | None = None
 
 
 class JobManager:
@@ -78,7 +79,7 @@ class JobManager:
             # Added for the render job queue -- guarded rather than assumed,
             # so an existing jobs.db from before this feature keeps working.
             existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
-            for column in ("payload", "worker_id", "claim_token"):
+            for column in ("payload", "worker_id", "claim_token", "lease_id"):
                 if column not in existing_columns:
                     conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
             # Whether a render job has been explicitly released for general
@@ -132,6 +133,7 @@ class JobManager:
             worker_id=row["worker_id"],
             claim_token=row["claim_token"],
             released=bool(row["released"]),
+            lease_id=row["lease_id"],
         )
 
     def _set(
@@ -208,7 +210,9 @@ class JobManager:
         self-render tokens, where the caller already knows exactly which
         job it wants (unlike `claim_next`'s "whatever's oldest"). Same
         atomicity guarantee: the whole select-then-update happens under
-        `self._lock`."""
+        `self._lock`. Mints a fresh `lease_id`, returned to the caller so it
+        can be echoed back on `/progress`, `/complete`, `/fail` -- see
+        `requeue_stale`'s docstring for why this matters."""
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM jobs WHERE id = ? AND status = 'pending' AND payload IS NOT NULL",
@@ -216,10 +220,11 @@ class JobManager:
             ).fetchone()
             if row is None:
                 return None
+            lease_id = str(uuid.uuid4())
             now = _now_iso()
             conn.execute(
-                "UPDATE jobs SET status = 'running', worker_id = ?, updated_at = ? WHERE id = ?",
-                (worker_id, now, job_id),
+                "UPDATE jobs SET status = 'running', worker_id = ?, lease_id = ?, updated_at = ? WHERE id = ?",
+                (worker_id, lease_id, now, job_id),
             )
             claimed = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return self._row_to_record(claimed)
@@ -251,10 +256,11 @@ class JobManager:
             ).fetchone()
             if row is None:
                 return None
+            lease_id = str(uuid.uuid4())
             now = _now_iso()
             conn.execute(
-                "UPDATE jobs SET status = 'running', worker_id = ?, updated_at = ? WHERE id = ?",
-                (worker_id, now, row["id"]),
+                "UPDATE jobs SET status = 'running', worker_id = ?, lease_id = ?, updated_at = ? WHERE id = ?",
+                (worker_id, lease_id, now, row["id"]),
             )
             claimed = conn.execute("SELECT * FROM jobs WHERE id = ?", (row["id"],)).fetchone()
         return self._row_to_record(claimed)
@@ -264,11 +270,18 @@ class JobManager:
         progress (bumped `updated_at`) in over `lease_seconds` back to
         `pending`, so another worker can pick it up -- covers a worker that
         vanished mid-render (closed laptop, network drop, crash). Returns
-        how many were reset."""
+        how many were reset.
+
+        Clears `lease_id` here too, not just on the next claim -- otherwise
+        the original (stale, possibly not actually dead, just slow/network-
+        partitioned) worker could still present its old lease_id and have
+        `/complete` or `/fail` accepted in the window between this requeue
+        and whoever claims the job next, clobbering that next worker's
+        in-progress render."""
         cutoff = _iso_minus_seconds(lease_seconds)
         with self._lock, self._connect() as conn:
             cur = conn.execute(
-                "UPDATE jobs SET status = 'pending', worker_id = NULL "
+                "UPDATE jobs SET status = 'pending', worker_id = NULL, lease_id = NULL "
                 "WHERE kind = ? AND status = 'running' AND worker_id IS NOT NULL AND updated_at < ?",
                 (kind, cutoff),
             )

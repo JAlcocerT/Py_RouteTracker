@@ -75,7 +75,7 @@ While a render is queued, the page shows a ready-to-paste command with a one-tim
 in, tied to just that render:
 
 ```sh
-docker run --rm ghcr.io/jlleongarcia/py_routetracker:latest \
+docker run --rm --pull always ghcr.io/jlleongarcia/py_routetracker:latest \
   python -m app.worker_main --server <this-webapp's-address> --job <job-id> --token <one-time-code>
 ```
 
@@ -104,7 +104,7 @@ opt-in shared-secret mechanism:
    works well here (see the Tailscale section above):
 
    ```sh
-   docker run --rm ghcr.io/jlleongarcia/py_routetracker:latest \
+   docker run --rm --pull always ghcr.io/jlleongarcia/py_routetracker:latest \
      python -m app.worker_main --server http://<coordinator-tailscale-ip>:7000 \
      --token <your token> --name my-laptop
    ```

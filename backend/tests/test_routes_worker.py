@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 import app.api.routes_videos as routes_videos
 from app.api import routes_jobs, routes_laps, routes_render, routes_worker
-from app.core.state import settings
+from app.core.state import job_manager, settings
 from app.telemetry.sources.external_gpx import load_gpx_points
 
 HAS_FFMPEG = shutil.which("ffmpeg") is not None
@@ -150,6 +150,8 @@ def test_full_remote_worker_round_trip(uploaded_and_queued_render, tmp_path):
     assert claimed["job_id"] == job_id
     assert claimed["widgets"]["speedo"] is True
     assert claimed["style"]["theme"] == "cyberpunk"
+    lease_id = claimed["lease_id"]
+    assert lease_id
 
     # job is now claimed -- a second claim attempt must find nothing
     second_claim = client.get("/api/worker/jobs/next", params={"worker_id": "another-worker"}, headers=_auth())
@@ -169,7 +171,7 @@ def test_full_remote_worker_round_trip(uploaded_and_queued_render, tmp_path):
     assert len(manifest["points"]) > 0
     assert "fps" in manifest
 
-    progress_resp = client.post(f"/api/worker/jobs/{job_id}/progress", json={"progress": 0.5}, headers=_auth())
+    progress_resp = client.post(f"/api/worker/jobs/{job_id}/progress", json={"progress": 0.5, "lease_id": lease_id}, headers=_auth())
     assert progress_resp.status_code == 200
     assert client.get(f"/api/jobs/{job_id}").json()["progress"] == pytest.approx(0.5)
 
@@ -180,6 +182,7 @@ def test_full_remote_worker_round_trip(uploaded_and_queued_render, tmp_path):
         complete_resp = client.post(
             f"/api/worker/jobs/{job_id}/complete",
             files={"file": ("output.mp4", f, "video/mp4")},
+            data={"lease_id": lease_id},
             headers=_auth(),
         )
     assert complete_resp.status_code == 200, complete_resp.text
@@ -196,11 +199,41 @@ def test_full_remote_worker_round_trip(uploaded_and_queued_render, tmp_path):
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed in this environment")
+def test_stale_workers_late_report_is_rejected_after_reassignment(uploaded_and_queued_render):
+    """Worker A goes quiet, its lease is requeued, worker B claims the same
+    job -- A's now-stale lease_id must not be accepted by progress/fail (and
+    by extension /complete, which checks the same way), so A can't corrupt
+    or clobber B's still-in-progress render."""
+    _video_id, job_id = uploaded_and_queued_render
+
+    first_claim = client.get("/api/worker/jobs/next", params={"worker_id": "worker-a"}, headers=_auth()).json()
+    stale_lease = first_claim["lease_id"]
+
+    # negative lease -> cutoff is in the future -> counts as stale immediately
+    job_manager.requeue_stale("render", lease_seconds=-1)
+
+    second_claim = client.get("/api/worker/jobs/next", params={"worker_id": "worker-b"}, headers=_auth()).json()
+    assert second_claim["lease_id"] != stale_lease
+
+    stale_progress = client.post(f"/api/worker/jobs/{job_id}/progress", json={"progress": 0.9, "lease_id": stale_lease}, headers=_auth())
+    assert stale_progress.status_code == 409
+
+    stale_fail = client.post(f"/api/worker/jobs/{job_id}/fail", json={"error": "worker-a timed out", "lease_id": stale_lease}, headers=_auth())
+    assert stale_fail.status_code == 409
+    # the requeue+reassignment must not have been undone by A's rejected report
+    assert client.get(f"/api/jobs/{job_id}").json()["status"] == "running"
+
+    # worker B's own report, using its current lease, must still work
+    ok = client.post(f"/api/worker/jobs/{job_id}/progress", json={"progress": 0.9, "lease_id": second_claim["lease_id"]}, headers=_auth())
+    assert ok.status_code == 200
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed in this environment")
 def test_worker_can_report_failure(uploaded_and_queued_render):
     video_id, job_id = uploaded_and_queued_render
-    client.get("/api/worker/jobs/next", params={"worker_id": "flaky-worker"}, headers=_auth())
+    claimed = client.get("/api/worker/jobs/next", params={"worker_id": "flaky-worker"}, headers=_auth()).json()
 
-    fail_resp = client.post(f"/api/worker/jobs/{job_id}/fail", json={"error": "out of disk space"}, headers=_auth())
+    fail_resp = client.post(f"/api/worker/jobs/{job_id}/fail", json={"error": "out of disk space", "lease_id": claimed["lease_id"]}, headers=_auth())
     assert fail_resp.status_code == 200
 
     job_status = client.get(f"/api/jobs/{job_id}").json()
@@ -214,7 +247,7 @@ def test_inputs_404_for_job_that_was_never_claimed():
 
 
 def test_progress_404_for_unknown_job():
-    resp = client.post("/api/worker/jobs/does-not-exist/progress", json={"progress": 0.5}, headers=_auth())
+    resp = client.post("/api/worker/jobs/does-not-exist/progress", json={"progress": 0.5, "lease_id": "whatever"}, headers=_auth())
     assert resp.status_code == 404
 
 
@@ -227,6 +260,7 @@ def _claim_token_for(job_id: str) -> str:
     return job["claim_token"]
 
 
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed in this environment")
 def test_job_claim_token_works_with_no_global_token_configured(monkeypatch, uploaded_and_queued_render):
     _video_id, job_id = uploaded_and_queued_render
     token = _claim_token_for(job_id)
@@ -269,6 +303,7 @@ def test_job_claim_token_does_not_grant_access_to_a_different_job(uploaded_and_q
     assert resp2.status_code == 401
 
 
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed in this environment")
 def test_claim_specific_job_endpoint_409_once_already_claimed(uploaded_and_queued_render):
     _video_id, job_id = uploaded_and_queued_render
     token = _claim_token_for(job_id)
@@ -291,6 +326,8 @@ def test_full_self_render_round_trip_using_only_the_job_token(monkeypatch, uploa
 
     claim_resp = client.post(f"/api/worker/jobs/{job_id}/claim", headers=_auth(token))
     assert claim_resp.status_code == 200, claim_resp.text
+    lease_id = claim_resp.json()["lease_id"]
+    assert lease_id
 
     video_resp = client.get(f"/api/worker/jobs/{job_id}/inputs/video", headers=_auth(token))
     assert video_resp.status_code == 200
@@ -300,7 +337,7 @@ def test_full_self_render_round_trip_using_only_the_job_token(monkeypatch, uploa
     assert telemetry_resp.status_code == 200
     assert len(telemetry_resp.json()["points"]) > 0
 
-    progress_resp = client.post(f"/api/worker/jobs/{job_id}/progress", json={"progress": 0.7}, headers=_auth(token))
+    progress_resp = client.post(f"/api/worker/jobs/{job_id}/progress", json={"progress": 0.7, "lease_id": lease_id}, headers=_auth(token))
     assert progress_resp.status_code == 200
 
     fake_output = tmp_path / "self_render_output.mp4"
@@ -309,6 +346,7 @@ def test_full_self_render_round_trip_using_only_the_job_token(monkeypatch, uploa
         complete_resp = client.post(
             f"/api/worker/jobs/{job_id}/complete",
             files={"file": ("output.mp4", f, "video/mp4")},
+            data={"lease_id": lease_id},
             headers=_auth(token),
         )
     assert complete_resp.status_code == 200, complete_resp.text

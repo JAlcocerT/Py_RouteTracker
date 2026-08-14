@@ -50,7 +50,7 @@ function SelfRenderSnippet({ jobId, claimToken, released }: { jobId: string; cla
   const [copied, setCopied] = useState(false)
   const [copyFailed, setCopyFailed] = useState(false)
   const [releasing, setReleasing] = useState(false)
-  const command = `docker run --rm ghcr.io/jlleongarcia/py_routetracker:latest \\\n  python -m app.worker_main --server ${window.location.origin} --job ${jobId} --token ${claimToken}`
+  const command = `docker run --rm --pull always ghcr.io/jlleongarcia/py_routetracker:latest \\\n  python -m app.worker_main --server ${window.location.origin} --job ${jobId} --token ${claimToken}`
 
   const copy = () => {
     if (copyText(command)) {

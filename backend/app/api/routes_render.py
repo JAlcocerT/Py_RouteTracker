@@ -62,7 +62,7 @@ async def start_render(video_id: str, body: RenderRequest):
     # configuration (no ROUTETRACKER_WORKER_TOKEN needed) and nothing to
     # share with anyone else. See app.api.routes_worker.require_job_access.
     claim_token = secrets.token_urlsafe(24)
-    video_store.update(video_id, render_job_ids=[*meta.render_job_ids, job_id])
+    video_store.append_render_job_id(video_id, job_id)
     job_manager.enqueue(job_id, payload, claim_token=claim_token)
     return {"job_id": job_id, "claim_token": claim_token}
 

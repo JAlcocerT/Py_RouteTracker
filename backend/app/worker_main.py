@@ -69,6 +69,7 @@ def _download_to(client: httpx.Client, path: str, dest: Path) -> None:
 
 def _process_job(client: httpx.Client, job: dict[str, Any], max_render_workers: int) -> None:
     job_id = job["job_id"]
+    lease_id = job["lease_id"]
 
     with tempfile.TemporaryDirectory(prefix=f"routetracker_worker_{job_id}_") as tmp:
         work_dir = Path(tmp)
@@ -101,14 +102,18 @@ def _process_job(client: httpx.Client, job: dict[str, Any], max_render_workers: 
                 return
             last_reported = p
             try:
-                client.post(f"/api/worker/jobs/{job_id}/progress", json={"progress": p})
+                client.post(f"/api/worker/jobs/{job_id}/progress", json={"progress": p, "lease_id": lease_id})
             except httpx.HTTPError:
                 pass
 
         execute_prepared_render(prepared, config, output_path, n_workers=max_render_workers, on_progress=on_progress)
 
         with open(output_path, "rb") as f:
-            resp = client.post(f"/api/worker/jobs/{job_id}/complete", files={"file": ("output.mp4", f, "video/mp4")})
+            resp = client.post(
+                f"/api/worker/jobs/{job_id}/complete",
+                files={"file": ("output.mp4", f, "video/mp4")},
+                data={"lease_id": lease_id},
+            )
             resp.raise_for_status()
 
 
@@ -153,7 +158,7 @@ def run_worker(server: str, token: str, name: str, poll_interval: float, max_ren
         except Exception as exc:  # noqa: BLE001 - must not crash the poll loop over one bad job
             _log(name, f"job {job['job_id']} failed: {exc}")
             try:
-                client.post(f"/api/worker/jobs/{job['job_id']}/fail", json={"error": str(exc)})
+                client.post(f"/api/worker/jobs/{job['job_id']}/fail", json={"error": str(exc), "lease_id": job["lease_id"]})
             except httpx.HTTPError:
                 pass
 
@@ -193,7 +198,7 @@ def run_single_job(server: str, token: str, job_id: str, name: str, max_render_w
     except Exception as exc:  # noqa: BLE001 - report back to the coordinator either way
         _log(name, f"job {job_id} failed: {exc}")
         try:
-            client.post(f"/api/worker/jobs/{job_id}/fail", json={"error": str(exc)})
+            client.post(f"/api/worker/jobs/{job_id}/fail", json={"error": str(exc), "lease_id": job["lease_id"]})
         except httpx.HTTPError:
             pass
         return 1

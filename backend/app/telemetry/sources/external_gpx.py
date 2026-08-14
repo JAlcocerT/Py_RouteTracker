@@ -83,11 +83,8 @@ class ExternalGpxSource:
 
         points["speed"] = compute_speed_kmh(points)
 
-        if self.video_start_time is not None:
-            points["time"] = (points["timestamp"] - self.video_start_time).dt.total_seconds()
-        else:
-            first_ts = points["timestamp"].iloc[0]
-            points["time"] = (points["timestamp"] - first_ts).dt.total_seconds() + self.offset_sec
+        reference_time = self.video_start_time if self.video_start_time is not None else points["timestamp"].iloc[0]
+        points["time"] = (points["timestamp"] - reference_time).dt.total_seconds() + self.offset_sec
 
         windowed = points[(points["time"] >= 0) & (points["time"] <= duration_sec)]
         if len(windowed) < 2:

@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import shutil
 
-from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
@@ -77,6 +77,7 @@ async def claim_next_job(worker_id: str, _auth: None = Depends(require_global_wo
     job, _prepared = claimed
     return {
         "job_id": job.id,
+        "lease_id": job.lease_id,
         "widgets": job.payload["widgets"],
         "style": job.payload["style"],
     }
@@ -99,6 +100,7 @@ async def claim_specific_job(job_id: str, _auth: None = Depends(require_job_acce
     job, _prepared = claimed
     return {
         "job_id": job.id,
+        "lease_id": job.lease_id,
         "widgets": job.payload["widgets"],
         "style": job.payload["style"],
     }
@@ -120,23 +122,37 @@ async def get_input_telemetry(job_id: str, _auth: None = Depends(require_job_acc
     return json.loads(manifest_path.read_text())
 
 
+def _require_current_lease(job, lease_id: str) -> None:
+    """A worker that went stale (requeue_stale reset the job to `pending`
+    and someone else claimed it) still holds a valid claim_token/global
+    token -- require_job_access alone can't tell it apart from the current
+    claimant. lease_id is a fresh, single-use-per-claim value minted by
+    claim_next/claim_specific and cleared by requeue_stale, so a mismatch
+    here means "you're not the worker currently holding this job" -- reject
+    rather than let a late report mutate state (or, worse, delete the
+    work_dir) out from under whoever claimed it next."""
+    if job is None:
+        raise HTTPException(404, "job not found")
+    if job.lease_id != lease_id:
+        raise HTTPException(409, "This worker's claim on this job is no longer current (it was likely reassigned after this worker went quiet past the stale-job timeout) -- stop and discard this render.")
+
+
 class ProgressUpdate(BaseModel):
     progress: float
+    lease_id: str
 
 
 @router.post("/jobs/{job_id}/progress")
 async def report_progress(job_id: str, body: ProgressUpdate, _auth: None = Depends(require_job_access)):
-    if job_manager.get_job(job_id) is None:
-        raise HTTPException(404, "job not found")
+    _require_current_lease(job_manager.get_job(job_id), body.lease_id)
     job_manager.update_progress(job_id, body.progress)
     return {"ok": True}
 
 
 @router.post("/jobs/{job_id}/complete")
-async def complete_job(job_id: str, file: UploadFile, _auth: None = Depends(require_job_access)):
+async def complete_job(job_id: str, file: UploadFile, lease_id: str = Form(...), _auth: None = Depends(require_job_access)):
     job = job_manager.get_job(job_id)
-    if job is None:
-        raise HTTPException(404, "job not found")
+    _require_current_lease(job, lease_id)
 
     video_id = job.payload["video_id"]
     output_path = settings.output_dir / f"{video_id}_{job_id}.mp4"
@@ -154,12 +170,12 @@ async def complete_job(job_id: str, file: UploadFile, _auth: None = Depends(requ
 
 class FailureReport(BaseModel):
     error: str
+    lease_id: str
 
 
 @router.post("/jobs/{job_id}/fail")
 async def fail_job(job_id: str, body: FailureReport, _auth: None = Depends(require_job_access)):
-    if job_manager.get_job(job_id) is None:
-        raise HTTPException(404, "job not found")
+    _require_current_lease(job_manager.get_job(job_id), body.lease_id)
     shutil.rmtree(work_dir_for_job(settings, job_id), ignore_errors=True)
     job_manager.mark_error(job_id, body.error)
     return {"ok": True}
