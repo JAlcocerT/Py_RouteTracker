@@ -80,17 +80,17 @@ class RenderConfig:
 
 
 def _format_lap_time(seconds: float) -> str:
-    """m:ss.cc (minutes:seconds.centiseconds), the standard racing-timing
-    format -- not the bare `ss.dd` a plain `f"{seconds:.2f}"` gives, which
-    reads as "61.95" for a 1:01.95 lap instead of the familiar clock shape.
-    Rounds via integer centiseconds so e.g. 59.998s correctly carries into
-    "1:00.00" instead of rounding display digits independently and
-    printing "0:60.00".
+    """m:ss.mmm (minutes:seconds.milliseconds), the standard racing-timing
+    format -- not the bare `ss.ddd` a plain `f"{seconds:.3f}"` gives, which
+    reads as "61.950" for a 1:01.950 lap instead of the familiar clock
+    shape. Rounds via integer milliseconds so e.g. 59.9998s correctly
+    carries into "1:00.000" instead of rounding display digits
+    independently and printing "0:60.000".
     """
-    total_cs = int(round(seconds * 100))
-    minutes, rem_cs = divmod(total_cs, 6000)
-    secs, centis = divmod(rem_cs, 100)
-    return f"{minutes}:{secs:02d}.{centis:02d}"
+    total_ms = int(round(seconds * 1000))
+    minutes, rem_ms = divmod(total_ms, 60_000)
+    secs, ms = divmod(rem_ms, 1000)
+    return f"{minutes}:{secs:02d}.{ms:03d}"
 
 
 # Every rect fraction and pt-sized font in this module was tuned by eye
@@ -160,23 +160,31 @@ _PANEL_EDGE = (1, 1, 1, 0.18)
 # -- open track/sky in most helmet/chest-mount POV shots, versus the bottom
 # corners' cockpit-occlusion risk (steering wheel, hands, knees) -- but this
 # footage's bottom corners read as open track/ground, not cockpit, so both
-# bottom slots are back in use. Reconsider (shrinking the minimap, or moving
-# it back to a top corner) if it turns out to overlap the cockpit on other
-# camera mounts/angles.
-_SPEEDO_PANEL_RECT = (0.015, 0.56, 0.30, 0.40)
+# bottom slots are back in use. Reconsider (shrinking the minimap further,
+# or moving it back to a top corner) if it turns out to overlap the cockpit
+# on other camera mounts/angles.
+#
+# Speedo panel is sized square in real output pixels (matching the design
+# width/height ratio, not the fraction values themselves, since the canvas
+# itself isn't square) -- _build_speedo's ax_spd.set_aspect("equal") makes
+# the gauge circle itself round regardless, but a square backing panel
+# reads as a deliberately-framed gauge rather than an arbitrary rectangle.
+# Minimap panel is 80% of its previous size, anchored to the same
+# bottom-right corner margin.
+_SPEEDO_PANEL_RECT = (0.015, 0.64, 0.18, 0.32)
 _GG_PANEL_RECT = (0.015, 0.035, 0.17, 0.21)
-_MINIMAP_PANEL_RECT = (0.685, 0.035, 0.30, 0.40)
-_SPEEDO_RECT = [0.02, 0.58, 0.29, 0.36]
+_MINIMAP_PANEL_RECT = (0.745, 0.035, 0.24, 0.32)
+_SPEEDO_RECT = [0.018, 0.656, 0.174, 0.288]
 _GG_RECT = [0.03, 0.05, 0.15, 0.19]
-_MINIMAP_RECT = [0.70, 0.05, 0.28, 0.36]
+_MINIMAP_RECT = [0.757, 0.047, 0.224, 0.288]
 
 
 class HudRenderer:
     """Draws one frame of the telemetry HUD onto a matplotlib figure.
 
     `df` must already be windowed to the render range and annotated with
-    `lap` / `last_lap_s` (see app.laps.detection.detect_laps) — this class
-    only draws, it doesn't know about trimming or lap math.
+    `lap` / `last_lap_s` / `lap_elapsed_s` (see app.laps.detection.detect_laps)
+    — this class only draws, it doesn't know about trimming or lap math.
     """
 
     def __init__(self, df: pd.DataFrame, lap_indices: list[int], config: RenderConfig):
@@ -266,6 +274,10 @@ class HudRenderer:
         recolouring arc, which read more like a loading bar than a
         speedometer since it had nothing static to compare the fill to."""
         cfg = self.config
+        # Without this, the gauge circle renders as an ellipse: matplotlib
+        # otherwise stretches the (0,1)x(0,1) data range to fill whatever
+        # pixel box the axes has, and that box isn't exactly square.
+        self.ax_spd.set_aspect("equal")
         cx, cy, rad = 0.5, 0.38, 0.30
         self._spd_center = (cx, cy)
         self._spd_radius = rad
@@ -313,10 +325,15 @@ class HudRenderer:
         self.ax_spd.text(cx, cy - 0.235, "KM/H", fontsize=10, color="#00ff9f", ha="center", va="center", fontweight="bold", path_effects=_OUTLINE)
 
         self.lap_txt = self.ax_spd.text(0.03, 0.95, "", fontsize=14, color="cyan", ha="left", va="center", fontweight="bold", path_effects=_OUTLINE)
-        self.last_txt = self.ax_spd.text(0.97, 0.95, "", fontsize=12, color="yellow", ha="right", va="center", fontweight="bold", path_effects=_OUTLINE)
+        # A live chronometer, not a static "last lap" readout: counts up
+        # from the moment the current lap started, so it reads the total
+        # lap time right as you cross the start/finish line -- then resets
+        # to 0 and starts counting the next lap, mirroring a real dash's
+        # running lap timer rather than only updating after the fact.
+        self.chrono_txt = self.ax_spd.text(0.97, 0.95, "", fontsize=12, color="yellow", ha="right", va="center", fontweight="bold", path_effects=_OUTLINE)
         self.ax_spd.set_xlim(0, 1)
         self.ax_spd.set_ylim(0, 1)
-        self._dynamic_artists += [self.sp_arc, self.sp_needle, self.sp_txt, self.lap_txt, self.last_txt]
+        self._dynamic_artists += [self.sp_arc, self.sp_needle, self.sp_txt, self.lap_txt, self.chrono_txt]
 
     def _build_gg(self) -> None:
         cfg = self.config
@@ -361,8 +378,7 @@ class HudRenderer:
             self.sp_needle.set_color(color)
 
             self.lap_txt.set_text(f"LAP {int(row.get('lap', 0))}")
-            last_lap = row.get("last_lap_s", 0.0)
-            self.last_txt.set_text(f"LAST {_format_lap_time(last_lap)}" if last_lap > 0 else "")
+            self.chrono_txt.set_text(_format_lap_time(row.get("lap_elapsed_s", 0.0)))
 
         if cfg.enable_gg:
             hist = self.df.iloc[max(0, f - cfg.gg_trail_frames):f + 1]

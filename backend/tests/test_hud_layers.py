@@ -9,11 +9,11 @@ from app.render.hud_layers import HudRenderer, RenderConfig, _format_lap_time, c
 @pytest.mark.parametrize(
     "seconds,expected",
     [
-        (0.0, "0:00.00"),
-        (5.4, "0:05.40"),
-        (61.95, "1:01.95"),  # racing-timing mm:ss.cc, not bare "61.95s"
-        (59.998, "1:00.00"),  # centisecond rounding must carry into seconds
-        (125.0, "2:05.00"),
+        (0.0, "0:00.000"),
+        (5.4, "0:05.400"),
+        (61.95, "1:01.950"),  # racing-timing mm:ss.mmm, not bare "61.95s"
+        (59.9998, "1:00.000"),  # millisecond rounding must carry into seconds
+        (125.0, "2:05.000"),
     ],
 )
 def test_format_lap_time(seconds, expected):
@@ -31,6 +31,7 @@ def _synthetic_df(n: int = 20) -> pd.DataFrame:
         "lon_g": 0.2 * np.cos(t),
         "lap": (t // 5 + 1).astype(int),
         "last_lap_s": 0.0,
+        "lap_elapsed_s": t % 5,
     })
 
 

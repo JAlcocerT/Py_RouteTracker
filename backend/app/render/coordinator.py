@@ -71,6 +71,7 @@ def _prepare_claimed_job(job: JobRecord, job_manager: JobManager, video_store: V
         df = pd.read_parquet(video_store.telemetry_path(video_id))
         df["lap"] = 0
         df["last_lap_s"] = 0.0
+        df["lap_elapsed_s"] = 0.0
         lap_indices = []
 
     work_dir = work_dir_for_job(settings, job.id)

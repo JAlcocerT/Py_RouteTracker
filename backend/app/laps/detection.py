@@ -196,4 +196,22 @@ def detect_laps(
         current_lap += 1
     annotated.loc[prev_idx:, "lap"] = current_lap
 
+    # Live "time since the current lap's own start crossing" for every row
+    # (the dynamic in-HUD chronometer) -- computed independently of the
+    # `lap`/`last_lap_s` loop above rather than folded into it, since that
+    # loop's boundary row (a crossing sample) gets written twice, by both
+    # the segment it closes and the one it opens, and whichever write
+    # happens last wins; a vectorized "most recent crossing at or before
+    # this row's own timestamp" search sidesteps that ambiguity and, unlike
+    # `lap_indices` (raw sample positions), keys off the interpolated
+    # crossing times themselves for frame-accurate results.
+    crossing_arr = np.asarray(crossing_times, dtype=float)
+    row_times = annotated["time"].to_numpy()
+    if len(crossing_arr):
+        pos = np.searchsorted(crossing_arr, row_times, side="right")
+        segment_start = np.where(pos > 0, crossing_arr[np.clip(pos - 1, 0, len(crossing_arr) - 1)], 0.0)
+    else:
+        segment_start = np.zeros_like(row_times)
+    annotated["lap_elapsed_s"] = row_times - segment_start
+
     return LapDetectionResult(annotated_df=annotated, lap_indices=lap_indices, lap_table=lap_table)

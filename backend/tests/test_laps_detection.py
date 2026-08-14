@@ -132,6 +132,23 @@ def test_resolve_crossing_falls_back_to_nearest_sample_without_heading():
     assert cross_t == pytest.approx(1.0)
 
 
+def test_lap_elapsed_s_resets_at_each_crossing_and_grows_within_lap():
+    df = _circular_track_df(n_laps=3, lap_time_s=60, dt=0.5, track_radius_m=100.0)
+    start_lat, start_lon = get_coordinates_at_time(df, target_time=0.0)
+
+    result = detect_laps(df, start_lat, start_lon, radius_m=15.0, min_lap_time_s=30.0)
+    annotated = result.annotated_df
+
+    assert "lap_elapsed_s" in annotated.columns
+    assert len(result.lap_indices) >= 2
+    # right at/after a crossing, the live chronometer must have reset
+    first_idx = result.lap_indices[0]
+    assert annotated["lap_elapsed_s"].iloc[first_idx] < 1.0
+    # and grown to nearly a full lap just before the *next* crossing
+    second_idx = result.lap_indices[1]
+    assert annotated["lap_elapsed_s"].iloc[second_idx - 1] > 55.0
+
+
 def test_detect_laps_respects_min_lap_time_ignores_noise_near_line():
     # a vehicle that stops right on the start line for a while shouldn't
     # register dozens of "laps" from GPS jitter
