@@ -95,6 +95,34 @@ def test_config_for_resolution_preserves_other_fields():
     assert scaled.max_expected_speed_kmh == 200.0
 
 
+def test_last_lap_prompt_shows_after_crossing_then_clears():
+    df = _synthetic_df()
+    df["last_lap_s"] = 61.859
+    df.loc[0, "lap_elapsed_s"] = 2.0  # just past the line
+    df.loc[1, "lap_elapsed_s"] = 5.5  # past _LAST_LAP_PROMPT_SECONDS
+    config = RenderConfig(width_px=320, height_px=180, dpi=80)
+    renderer = HudRenderer(df, lap_indices=[0], config=config)
+    try:
+        renderer.draw_frame(0)
+        assert renderer.last_lap_txt.get_text() == "LAST LAP 1:01.859"
+
+        renderer.draw_frame(1)
+        assert renderer.last_lap_txt.get_text() == ""
+    finally:
+        renderer.close()
+
+
+def test_last_lap_prompt_hidden_before_any_lap_completed():
+    df = _synthetic_df()  # last_lap_s stays 0.0 -- no lap finished yet
+    config = RenderConfig(width_px=320, height_px=180, dpi=80)
+    renderer = HudRenderer(df, lap_indices=[], config=config)
+    try:
+        renderer.draw_frame(0)
+        assert renderer.last_lap_txt.get_text() == ""
+    finally:
+        renderer.close()
+
+
 def test_draw_frame_out_of_range_is_noop():
     df = _synthetic_df()
     config = RenderConfig(width_px=320, height_px=180, dpi=80)

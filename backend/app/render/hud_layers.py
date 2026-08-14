@@ -126,6 +126,10 @@ def config_for_resolution(base: RenderConfig, width_px: int, height_px: int) -> 
 
 _OUTLINE = [pe.withStroke(linewidth=3, foreground="black")]
 
+# How long the just-completed lap time stays on screen after a crossing --
+# long enough to actually read at a glance while driving, not just a flash.
+_LAST_LAP_PROMPT_SECONDS = 5.0
+
 # Speedo sweep: 240 degrees of a full circle (a 120 degree gap centered on
 # straight down, for the numeric readout) rather than a flat 180 degree
 # semicircle -- closer to how a real gauge cluster reads. Angles in the
@@ -331,9 +335,15 @@ class HudRenderer:
         # to 0 and starts counting the next lap, mirroring a real dash's
         # running lap timer rather than only updating after the fact.
         self.chrono_txt = self.ax_spd.text(0.97, 0.95, "", fontsize=12, color="yellow", ha="right", va="center", fontweight="bold", path_effects=_OUTLINE)
+        # Just-completed lap time, shown as a brief callout right under the
+        # chrono for _LAST_LAP_PROMPT_SECONDS after each crossing, then
+        # cleared -- easy to actually read (the live chrono above it has
+        # already moved on to counting the next lap by the time you could
+        # react to it flashing past zero).
+        self.last_lap_txt = self.ax_spd.text(0.97, 0.87, "", fontsize=11, color="white", ha="right", va="center", fontweight="bold", path_effects=_OUTLINE)
         self.ax_spd.set_xlim(0, 1)
         self.ax_spd.set_ylim(0, 1)
-        self._dynamic_artists += [self.sp_arc, self.sp_needle, self.sp_txt, self.lap_txt, self.chrono_txt]
+        self._dynamic_artists += [self.sp_arc, self.sp_needle, self.sp_txt, self.lap_txt, self.chrono_txt, self.last_lap_txt]
 
     def _build_gg(self) -> None:
         cfg = self.config
@@ -378,7 +388,14 @@ class HudRenderer:
             self.sp_needle.set_color(color)
 
             self.lap_txt.set_text(f"LAP {int(row.get('lap', 0))}")
-            self.chrono_txt.set_text(_format_lap_time(row.get("lap_elapsed_s", 0.0)))
+            elapsed = row.get("lap_elapsed_s", 0.0)
+            self.chrono_txt.set_text(_format_lap_time(elapsed))
+
+            last_lap = row.get("last_lap_s", 0.0)
+            if last_lap > 0 and elapsed < _LAST_LAP_PROMPT_SECONDS:
+                self.last_lap_txt.set_text(f"LAST LAP {_format_lap_time(last_lap)}")
+            else:
+                self.last_lap_txt.set_text("")
 
         if cfg.enable_gg:
             hist = self.df.iloc[max(0, f - cfg.gg_trail_frames):f + 1]
