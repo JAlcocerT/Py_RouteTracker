@@ -2,7 +2,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.laps.detection import detect_laps, get_coordinates_at_time, haversine_distance_m
+from app.laps.detection import (
+    _estimate_heading,
+    _resolve_crossing,
+    detect_laps,
+    get_coordinates_at_time,
+    haversine_distance_m,
+)
 
 DEG_PER_METER_AT_EQUATOR = 1 / 111_000
 
@@ -89,6 +95,41 @@ def test_detect_laps_empty_df_returns_empty_result():
     result = detect_laps(pd.DataFrame(columns=["time", "lat", "lon", "speed"]), 0.0, 0.0)
     assert result.lap_indices == []
     assert result.lap_table.empty
+
+
+def test_estimate_heading_matches_direction_of_travel():
+    # straight-line motion due east at constant speed
+    east_m = np.array([-10.0, -5.0, 0.0, 5.0, 10.0])
+    north_m = np.zeros(5)
+    heading = _estimate_heading(east_m, north_m, idx=2, window=2)
+    assert heading == pytest.approx((1.0, 0.0), abs=1e-9)
+
+
+def test_estimate_heading_none_when_stationary():
+    east_m = np.zeros(5)
+    north_m = np.zeros(5)
+    assert _estimate_heading(east_m, north_m, idx=2, window=2) is None
+
+
+def test_resolve_crossing_interpolates_between_straddling_samples():
+    # heading-aligned (east) position crosses zero between t=2.0 (-0.3) and
+    # t=2.5 (+0.7) -- 0.3/(0.3+0.7) = 30% of the way through that 0.5s gap,
+    # i.e. the true crossing is at t=2.15, not snapped to either raw sample
+    t = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
+    east_m = np.array([-4.0, -3.0, -2.0, -1.0, -0.3, 0.7, 1.7])
+    north_m = np.zeros(7)
+    idx, cross_t = _resolve_crossing(east_m, north_m, t, zone_start_i=2, zone_end_i=6, best_idx=4, heading=(1.0, 0.0))
+    assert cross_t == pytest.approx(2.15, abs=1e-9)
+    assert idx == 4  # nearer of the two straddling samples (frac=0.3 < 0.5)
+
+
+def test_resolve_crossing_falls_back_to_nearest_sample_without_heading():
+    t = np.array([0.0, 1.0, 2.0])
+    east_m = np.array([1.0, 0.1, 1.0])
+    north_m = np.zeros(3)
+    idx, cross_t = _resolve_crossing(east_m, north_m, t, zone_start_i=0, zone_end_i=2, best_idx=1, heading=None)
+    assert idx == 1
+    assert cross_t == pytest.approx(1.0)
 
 
 def test_detect_laps_respects_min_lap_time_ignores_noise_near_line():

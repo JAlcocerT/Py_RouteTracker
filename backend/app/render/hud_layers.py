@@ -126,6 +126,19 @@ def config_for_resolution(base: RenderConfig, width_px: int, height_px: int) -> 
 
 _OUTLINE = [pe.withStroke(linewidth=3, foreground="black")]
 
+# Speedo sweep: 240 degrees of a full circle (a 120 degree gap centered on
+# straight down, for the numeric readout) rather than a flat 180 degree
+# semicircle -- closer to how a real gauge cluster reads. Angles in the
+# standard math convention (0=3 o'clock, 90=12 o'clock, measured
+# counter-clockwise), matching np.cos/np.sin directly.
+_SWEEP_START_DEG = 210.0
+_SWEEP_END_DEG = -30.0
+
+
+def _angle_for_frac(frac: float) -> float:
+    """Maps a 0..1 gauge reading to its angle (radians) along the sweep."""
+    return np.radians(_SWEEP_START_DEG + frac * (_SWEEP_END_DEG - _SWEEP_START_DEG))
+
 # Rounded, semi-transparent dark backing panels give every widget contrast
 # against arbitrary, unpredictable footage (bright sky, glare, light-colored
 # kerbs/barriers) that a bare glow/outline alone can't reliably beat -- see
@@ -142,18 +155,20 @@ _PANEL_EDGE = (1, 1, 1, 0.18)
 # reasonably want to override (unlike the toggles/thresholds on
 # RenderConfig itself).
 #
-# All three widgets sit in a top corner or the bottom-left corner, never
-# the bottom-center/right: on close-up POV footage (steering wheel, hands,
-# knees) that's the area most reliably occluded by the cockpit itself, and
-# the previous layout (speedo+G-G stacked lower-left, minimap lower-right)
-# put every widget right on top of that occlusion. Top-left/top-right are
-# open track/sky in effectively every helmet/chest-mount POV shot.
+# Speedo top-left, G-G and minimap both anchored along the bottom (left and
+# right respectively). An earlier version kept the minimap top-right instead
+# -- open track/sky in most helmet/chest-mount POV shots, versus the bottom
+# corners' cockpit-occlusion risk (steering wheel, hands, knees) -- but this
+# footage's bottom corners read as open track/ground, not cockpit, so both
+# bottom slots are back in use. Reconsider (shrinking the minimap, or moving
+# it back to a top corner) if it turns out to overlap the cockpit on other
+# camera mounts/angles.
 _SPEEDO_PANEL_RECT = (0.015, 0.56, 0.30, 0.40)
 _GG_PANEL_RECT = (0.015, 0.035, 0.17, 0.21)
-_MINIMAP_PANEL_RECT = (0.685, 0.56, 0.30, 0.40)
+_MINIMAP_PANEL_RECT = (0.685, 0.035, 0.30, 0.40)
 _SPEEDO_RECT = [0.02, 0.58, 0.29, 0.36]
 _GG_RECT = [0.03, 0.05, 0.15, 0.19]
-_MINIMAP_RECT = [0.70, 0.58, 0.28, 0.36]
+_MINIMAP_RECT = [0.70, 0.05, 0.28, 0.36]
 
 
 class HudRenderer:
@@ -251,10 +266,10 @@ class HudRenderer:
         recolouring arc, which read more like a loading bar than a
         speedometer since it had nothing static to compare the fill to."""
         cfg = self.config
-        cx, cy, rad = 0.5, 0.30, 0.33
+        cx, cy, rad = 0.5, 0.38, 0.30
         self._spd_center = (cx, cy)
         self._spd_radius = rad
-        theta = np.linspace(np.pi, 0, 100)
+        theta = np.linspace(*[np.radians(d) for d in (_SWEEP_START_DEG, _SWEEP_END_DEG)], 100)
         self._arc_x = cx + rad * np.cos(theta)
         self._arc_y = cy + rad * np.sin(theta)
 
@@ -266,14 +281,14 @@ class HudRenderer:
             (0.60, 0.85, "#ffd400"),
             (0.85, 1.0, "#ff0055"),
         ):
-            zt = np.linspace(np.pi * (1 - lo), np.pi * (1 - hi), 24)
+            zt = np.linspace(_angle_for_frac(lo), _angle_for_frac(hi), 24)
             self.ax_spd.plot(cx + rad * np.cos(zt), cy + rad * np.sin(zt),
                               color=color, lw=12, alpha=0.20, solid_capstyle="butt")
 
         # Static tick marks every 10% of the configured max speed, with a
         # numeric label on every other (major) tick.
         for frac in np.linspace(0, 1, 11):
-            ang = np.pi * (1 - frac)
+            ang = _angle_for_frac(frac)
             major = round(frac * 10) % 2 == 0
             r0 = rad - (0.05 if major else 0.03)
             self.ax_spd.plot(
@@ -340,7 +355,7 @@ class HudRenderer:
             self.sp_arc.set_color(color)
 
             cx, cy = self._spd_center
-            ang = np.pi * (1 - r)
+            ang = _angle_for_frac(r)
             tip = self._spd_radius - 0.055
             self.sp_needle.set_data([cx, cx + tip * np.cos(ang)], [cy, cy + tip * np.sin(ang)])
             self.sp_needle.set_color(color)
