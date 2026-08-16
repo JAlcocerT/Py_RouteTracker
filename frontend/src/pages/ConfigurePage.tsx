@@ -16,6 +16,21 @@ interface ConfigurePageProps {
 const DEFAULT_WIDGETS: WidgetSelection = { speedo: true, gg: true, minimap: true }
 const DEFAULT_STYLE: RenderStyle = { theme: 'cyberpunk', max_expected_speed_kmh: 85, limit_g: 1.5 }
 
+// Speedo max defaults to the video's own recorded top speed rather than a
+// fixed value -- a fixed 85 km/h gauge either clips a faster car's needle
+// pinned at max or wastes most of the dial on a slow go-kart lap. The
+// margin leaves headroom above the peak sample instead of topping out
+// exactly at it, and rounding keeps the gauge's tick labels tidy.
+const SPEEDO_SAFETY_MARGIN = 1.06
+const SPEEDO_ROUNDING_STEP_KMH = 5
+const SPEEDO_MIN_KMH = 20
+
+function computeSpeedoMax(points: TelemetryPoint[]): number {
+  const topSpeed = points.reduce((max, p) => Math.max(max, p.speed), 0)
+  const withMargin = topSpeed * SPEEDO_SAFETY_MARGIN
+  return Math.max(SPEEDO_MIN_KMH, Math.ceil(withMargin / SPEEDO_ROUNDING_STEP_KMH) * SPEEDO_ROUNDING_STEP_KMH)
+}
+
 export function ConfigurePage({ videoId, videoFile, onRenderStarted }: ConfigurePageProps) {
   const [meta, setMeta] = useState<VideoMeta | null>(null)
   const [points, setPoints] = useState<TelemetryPoint[]>([])
@@ -40,6 +55,7 @@ export function ConfigurePage({ videoId, videoFile, onRenderStarted }: Configure
       setMeta(videoMeta)
       setPoints(telemetry)
       setTrimEnd(videoMeta.duration_sec ?? 0)
+      setStyle((s) => ({ ...s, max_expected_speed_kmh: computeSpeedoMax(telemetry) }))
     })()
     return () => {
       cancelled = true
