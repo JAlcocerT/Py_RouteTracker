@@ -1,8 +1,7 @@
 # Backend
 
 FastAPI service for the telemetry-overlay pipeline: upload → extract → configure → render.
-Ported from the prototype scripts now archived at `../legacy/overlay/`. See the root
-`README.md` for the product-level picture.
+See the root `README.md` for the product-level picture.
 
 ## Requirements
 
@@ -25,9 +24,7 @@ uv run pytest
 
 Most tests need no external binaries — telemetry parsing, lap detection,
 extrema comparison, the job manager, and the HUD drawing layer are all
-tested against fixtures committed in `tests/fixtures/` (copied from the
-`research/` sample data, kept independent of it so the test suite doesn't
-depend on that folder's contents) or synthetic data.
+tested against fixtures committed in `tests/fixtures/` or synthetic data.
 
 A handful of tests that actually invoke `ffmpeg` (trimming, PNG-sequence
 compositing, and the full render-job lifecycle) are skipped automatically

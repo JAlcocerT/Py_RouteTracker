@@ -133,14 +133,10 @@ exactly why it needs no configuration to use.
 ```
 backend/    FastAPI service: telemetry extraction, lap detection, HUD rendering, job queue
 frontend/   React + Vite + TypeScript webapp
-legacy/     Archived prototype scripts (overlay/) and the original Streamlit GPX viewer
-research/   Sample data and exploratory notebooks this project grew out of; not maintained
 ```
 
-`backend/` and `frontend/` are the project — see `backend/readme.md` for backend
-development/testing, and run `npm run dev` in `frontend/` for frontend development.
-Everything under `legacy/` and `research/` is historical context, kept for reference but not
-part of the running app.
+See `backend/readme.md` for backend development/testing, and run `npm run dev` in
+`frontend/` for frontend development.
 
 ## CI/CD
 
@@ -163,10 +159,9 @@ on a Raspberry Pi or other ARM homelab box, not just x86 servers.
     commit.
 
 This replaces the repo's original three CI/CD workflows (`CICD-GHA_MultiArch.yml`, `ci-cd.yml`,
-`github-runner.yml`, archived along with the Streamlit app they built — see
-`legacy/streamlit_viewer/`), which were near-duplicates of each other, published to a
-hardcoded `jalcocert/...` GHCR namespace regardless of who forked the repo, required manually
-creating and rotating a personal access token (`secrets.CICD_PyRouteTracker_Token`), and never
+`github-runner.yml`, which built a since-removed Streamlit app), which were near-duplicates of
+each other, published to a hardcoded `jalcocert/...` GHCR namespace regardless of who forked
+the repo, required manually creating and rotating a personal access token (`secrets.CICD_PyRouteTracker_Token`), and never
 ran a test suite before publishing. This one uses the automatically-provided `GITHUB_TOKEN`
 (no setup needed beyond forking — GitHub Actions has push access to your own fork's GHCR by
 default) and targets whichever repo it actually runs in.

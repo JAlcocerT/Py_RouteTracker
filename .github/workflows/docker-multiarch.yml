@@ -1,8 +1,8 @@
 name: CI/CD — Test & Publish Multi-Arch Image
 
-# Replaces the old CICD-GHA_MultiArch.yml / ci-cd.yml / github-runner.yml
-# (archived, along with the Streamlit app they built — see legacy/streamlit_viewer/).
-# Those three were near-duplicates of each other and never actually ran a test
+# Replaces the old CICD-GHA_MultiArch.yml / ci-cd.yml / github-runner.yml,
+# which built a since-removed Streamlit app. Those three were near-duplicates
+# of each other and never actually ran a test
 # suite before publishing; this one gates the image build on the real backend
 # and frontend checks that now exist. See README.md's "CI/CD" section.
 
