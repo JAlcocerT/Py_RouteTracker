@@ -128,6 +128,21 @@ exactly why it needs no configuration to use.
   when you have a phone/Garmin/Polar GPX track instead. You can optionally give the video's
   real-world start time to sync the two automatically.
 
+## Joining split recordings
+
+Some action cams split one continuous recording into multiple files once it crosses a size
+threshold (e.g. a chaptered GoPro clip: `GH010437.MP4`, `GH020437.MP4`, ...). Pick **"Join
+split recording"** on the upload page, drop in all the parts, and they're combined into one
+file server-side before extraction runs — GoPro-numbered parts (`GHccNNNN`/`GXccNNNN`) are
+auto-ordered by chapter, otherwise arrange them manually with the up/down controls.
+
+The join itself is a lossless, container-level concatenation via `ffmpeg`'s own concat
+demuxer (`-map 0 -c copy -copy_unknown`) — no re-encode, and every stream carries over
+verbatim at its original position, including a GoPro's embedded GPMF telemetry track that a
+naive re-encode join (or most video editors) would otherwise drop. Parts must share the same
+codec/resolution/frame rate (true for chapters of one recording); mismatched files are
+rejected with a clear error before anything is joined.
+
 ## Repo map
 
 ```

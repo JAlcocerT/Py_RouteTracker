@@ -61,8 +61,63 @@ export async function uploadVideo(opts: UploadOptions): Promise<{ video_id: stri
   })
 }
 
+export interface JoinUploadOptions {
+  videoParts: File[]
+  sourceType: SourceType
+  gpx?: File
+  videoStartTime?: string
+  offsetSec?: number
+  onProgress?: (fraction: number) => void
+}
+
+export async function joinAndUploadVideo(opts: JoinUploadOptions): Promise<{ video_id: string; job_id: string; duration_sec: number }> {
+  const form = new FormData()
+  // Parts must already be in correct playback order -- the backend joins
+  // them in exactly the order they're appended here (see PartsList /
+  // sortGoProParts on the frontend for how that order is decided).
+  for (const part of opts.videoParts) form.append('videos', part)
+  form.append('source_type', opts.sourceType)
+  if (opts.gpx) form.append('gpx', opts.gpx)
+  if (opts.videoStartTime) form.append('video_start_time', opts.videoStartTime)
+  if (opts.offsetSec !== undefined) form.append('offset_sec', String(opts.offsetSec))
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/videos/join')
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && opts.onProgress) opts.onProgress(e.loaded / e.total)
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText))
+        } catch {
+          reject(new Error('Upload succeeded but the response was not valid JSON'))
+        }
+      } else {
+        reject(new Error(`${xhr.status} ${xhr.statusText}: ${xhr.responseText}`))
+      }
+    }
+    xhr.onerror = () => reject(new Error('Network error during upload'))
+
+    xhr.send(form)
+  })
+}
+
 export async function getVideo(videoId: string): Promise<VideoMeta> {
   return asJson(await fetch(`/api/videos/${videoId}`))
+}
+
+// Only needed after a /join upload: a joined video's local File objects
+// are just its raw MP4 parts, which don't concatenate into a playable
+// blob client-side, so the trim/preview UI fetches the real joined file
+// back from here once instead.
+export async function fetchVideoSourceFile(videoId: string, filename: string): Promise<File> {
+  const resp = await fetch(`/api/videos/${videoId}/source`)
+  if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}: could not fetch joined video`)
+  const blob = await resp.blob()
+  return new File([blob], filename, { type: blob.type || 'video/mp4' })
 }
 
 export async function getHealth(): Promise<{ status: string; retention_minutes: number }> {
