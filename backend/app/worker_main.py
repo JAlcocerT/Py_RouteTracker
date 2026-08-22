@@ -127,8 +127,14 @@ def run_worker(server: str, token: str, name: str, poll_interval: float, max_ren
         # project explicitly supports Raspberry Pi -- see root README) that
         # can genuinely take minutes for a real clip, not seconds. A short
         # read timeout here doesn't make anything safer, it just turns a
-        # slow-but-working coordinator into a spurious ReadTimeout.
-        timeout=httpx.Timeout(30.0, read=1800.0),
+        # slow-but-working coordinator into a spurious ReadTimeout. Write
+        # gets the same long timeout for the same reason on the other end
+        # of the pipeline: /jobs/{id}/complete uploads the finished
+        # (potentially large) rendered file back to the coordinator, and the
+        # default 30s write timeout was previously left un-overridden, so a
+        # big file over a slow link could fail the upload after a full,
+        # successful render.
+        timeout=httpx.Timeout(30.0, read=1800.0, write=1800.0),
     )
     _log(name, f"polling {server} every {poll_interval}s (max_render_workers={max_render_workers})")
 
@@ -177,8 +183,14 @@ def run_single_job(server: str, token: str, job_id: str, name: str, max_render_w
         # project explicitly supports Raspberry Pi -- see root README) that
         # can genuinely take minutes for a real clip, not seconds. A short
         # read timeout here doesn't make anything safer, it just turns a
-        # slow-but-working coordinator into a spurious ReadTimeout.
-        timeout=httpx.Timeout(30.0, read=1800.0),
+        # slow-but-working coordinator into a spurious ReadTimeout. Write
+        # gets the same long timeout for the same reason on the other end
+        # of the pipeline: /jobs/{id}/complete uploads the finished
+        # (potentially large) rendered file back to the coordinator, and the
+        # default 30s write timeout was previously left un-overridden, so a
+        # big file over a slow link could fail the upload after a full,
+        # successful render.
+        timeout=httpx.Timeout(30.0, read=1800.0, write=1800.0),
     )
     _log(name, f"claiming job {job_id} on {server}")
 

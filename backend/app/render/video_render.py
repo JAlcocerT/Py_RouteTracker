@@ -148,6 +148,7 @@ def prepare_render_job(
     trim_start: float,
     trim_end: float,
     work_dir: Path,
+    on_progress: ProgressCallback | None = None,
 ) -> PreparedRenderJob:
     """The cheap half of a render: trim the source video and window the
     telemetry to the requested [trim_start, trim_end] range. Always runs on
@@ -156,10 +157,14 @@ def prepare_render_job(
     `annotated_telemetry` must be sampled on a uniform time grid (see
     app.telemetry.resample.resample_to_grid) and, if lap widgets are
     enabled, annotated by app.laps.detection.detect_laps.
+
+    `on_progress`, if given, is `trim_video`'s heartbeat -- for a large
+    source file this re-encode alone can run long enough to matter for the
+    caller's job-lease clock (see app.render.coordinator._prepare_claimed_job).
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     trimmed_path = work_dir / "trimmed.mp4"
-    trim_video(source_video, trim_start, trim_end, trimmed_path)
+    trim_video(source_video, trim_start, trim_end, trimmed_path, on_progress=on_progress)
 
     window = annotated_telemetry[
         (annotated_telemetry["time"] >= trim_start) & (annotated_telemetry["time"] <= trim_end)
@@ -210,7 +215,10 @@ def execute_prepared_render(
     )
     report(0.9)
 
-    overlay_png_sequence(prepared.trimmed_video_path, frames_dir, prepared.fps, output_path)
+    overlay_png_sequence(
+        prepared.trimmed_video_path, frames_dir, prepared.fps, output_path,
+        on_progress=lambda f: report(0.9 + 0.1 * f),
+    )
     report(1.0)
 
     return RenderResult(output_path=output_path, frame_count=len(prepared.windowed_telemetry))
@@ -238,7 +246,10 @@ def render_and_composite(
             on_progress(max(0.0, min(1.0, fraction)))
 
     report(0.0)
-    prepared = prepare_render_job(source_video, annotated_telemetry, lap_indices, trim_start, trim_end, work_dir)
+    prepared = prepare_render_job(
+        source_video, annotated_telemetry, lap_indices, trim_start, trim_end, work_dir,
+        on_progress=lambda f: report(0.1 * f),
+    )
     report(0.1)
 
     return execute_prepared_render(

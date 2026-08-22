@@ -70,13 +70,27 @@ class LocalRenderWorker:
             result = {"output_file": str(output_path), "video_id": job.payload["video_id"]}
         except Exception as exc:  # noqa: BLE001 - job errors must not kill this thread
             error = f"{exc}\n{traceback.format_exc()}"
-        finally:
-            # trimmed.mp4 + HUD frame PNGs + telemetry.json: pure scratch,
-            # zero value once the final output exists (or failed to). Done
-            # BEFORE marking the job done/error below -- otherwise a client
-            # polling status could see "done" and check for the (still
-            # briefly present) work_dir before this cleanup has run.
-            shutil.rmtree(prepared.work_dir, ignore_errors=True)
+
+        # A render on a large enough video can run past this job's lease
+        # (see StaleRenderJobRequeuer), in which case someone else may have
+        # already reclaimed and re-rendered it while this render was still
+        # running. app.api.routes_worker._require_current_lease guards
+        # exactly this for remote workers; this is the same check for the
+        # built-in local one, which has no HTTP round-trip to hang it off
+        # of. Skip straight to returning -- neither mark_done/mark_error nor
+        # the work_dir cleanup below are safe here, since a new claimant may
+        # already be using this same (job-id-keyed) work_dir.
+        current = self._job_manager.get_job(job.id)
+        if current is None or current.lease_id != job.lease_id:
+            logger.warning("Render job %s was reassigned while this local worker was still processing it -- discarding this result.", job.id)
+            return True
+
+        # trimmed.mp4 + HUD frame PNGs + telemetry.json: pure scratch,
+        # zero value once the final output exists (or failed to). Done
+        # BEFORE marking the job done/error below -- otherwise a client
+        # polling status could see "done" and check for the (still
+        # briefly present) work_dir before this cleanup has run.
+        shutil.rmtree(prepared.work_dir, ignore_errors=True)
 
         if error is None:
             self._job_manager.mark_done(job.id, result)

@@ -79,6 +79,11 @@ def _prepare_claimed_job(job: JobRecord, job_manager: JobManager, video_store: V
         prepared = prepare_render_job(
             Path(meta.video_path), df, lap_indices,
             job.payload["trim_start"], job.payload["trim_end"], work_dir,
+            # trim_video re-encodes the (possibly large) original upload and
+            # can itself run long enough to matter for the lease clock --
+            # see StaleRenderJobRequeuer. Heartbeat it the same way the
+            # render phase already heartbeats via job_manager.update_progress.
+            on_progress=lambda p: job_manager.update_progress(job.id, p),
         )
     except Exception as exc:
         job_manager.mark_error(job.id, f"failed to prepare render: {exc}")

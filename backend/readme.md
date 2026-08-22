@@ -107,6 +107,19 @@ security model. Architecture:
   identically whether called in-process or by a worker that fetched its inputs over HTTP.
   `render_and_composite` is kept as a thin wrapper calling both, for callers (tests, and
   conceptually "a single machine doing everything") that don't care about the split.
+  Both `on_progress` callbacks are threaded all the way down into
+  `app/core/ffmpeg_utils.py`'s `trim_video`/`overlay_png_sequence` (see below) -- a large
+  enough video used to leave the claim's lease heartbeat completely silent during those two
+  ffmpeg calls, long enough for `StaleRenderJobRequeuer` to (wrongly) decide the worker had
+  died.
+- **`app/core/ffmpeg_utils.py`**'s `trim_video` and `overlay_png_sequence` take an optional
+  `on_progress` and, when given one, run ffmpeg with `-progress pipe:1 -nostats` instead of a
+  plain blocking `subprocess.run`, reading `out_time_us` off stdout to compute a fraction and
+  call back periodically as the encode runs (`_run_ffmpeg_with_heartbeat`). This is what
+  keeps a render job's lease alive during the two single, long, previously-silent ffmpeg
+  subprocess calls in the pipeline -- the initial trim (re-encoding the *original*, possibly
+  multi-GB upload) and the final HUD composite -- instead of only between them, where the
+  per-frame HUD render already reported progress.
 - **`app/core/jobs.py`**'s `jobs` table gained `payload` (the JSON render request),
   `worker_id`, `claim_token`, and `released` columns (migrated via a guarded `ALTER TABLE`,
   not a fresh-schema assumption). `enqueue`/`claim_next`/`claim_specific`/`release`/
@@ -147,7 +160,15 @@ security model. Architecture:
   path, which could run several renders concurrently). The same file's
   `StaleRenderJobRequeuer` periodically calls `requeue_stale` so a render claimed by a worker
   that vanished mid-job (closed laptop, network drop) doesn't stay stuck forever --
-  `ROUTETRACKER_WORKER_LEASE_MINUTES` (default 30).
+  `ROUTETRACKER_WORKER_LEASE_MINUTES` (default 30). Even with the heartbeat fix above, a
+  render can still genuinely outlast the lease (e.g. `requeue_stale` firing on a stale
+  in-flight claim, or the interval between heartbeats landing badly) and get reassigned while
+  this worker is still rendering it; `_process_one` re-checks the job's current `lease_id`
+  against the one it claimed with *before* calling `mark_done`/`mark_error` or cleaning up
+  `work_dir`, and simply discards its result if the lease has moved on. This mirrors
+  `_require_current_lease`'s fencing for remote workers below -- before this fix, this
+  in-process path had no equivalent check and would unconditionally overwrite whatever the
+  new claimant was doing.
 - **`app/api/routes_worker.py`**, prefix `/api/worker`, has two auth dependencies:
   `require_global_worker_token` (the admin's `ROUTETRACKER_WORKER_TOKEN`; 503 if unset, 401
   on mismatch) guards only `GET /jobs/next` (claim-whatever's-oldest only makes sense for a
@@ -163,14 +184,26 @@ security model. Architecture:
   claims via `/jobs/next`, needs the global token) and `--job <id>` (`run_single_job`, one
   `POST /jobs/{id}/claim` then exit -- a 409 there means something else already has it,
   which is a clean no-op, not an error). Runs from the same Docker image already published
-  by CI/CD (`docker-multiarch.yml`), just with a different `command:`.
+  by CI/CD (`docker-multiarch.yml`), just with a different `command:`. Its `httpx.Client`
+  uses `httpx.Timeout(30.0, read=1800.0, write=1800.0)` -- both `read` (claiming a job blocks
+  on the coordinator's synchronous prepare/trim step, which can take minutes on modest
+  hardware) *and* `write` are overridden to the same 30-minute ceiling as the lease itself.
+  `write` used to be left at the 30s default, which could fail `/jobs/{id}/complete` --
+  uploading the finished, potentially large rendered file back to the coordinator -- on a
+  slow link, discarding a render that had actually finished successfully.
 
 Tests: `tests/test_jobs.py` covers both claim paths directly (atomicity, kind filtering,
 requeue, that `claim_specific` doesn't disturb `claim_next`'s ordering for other queued jobs,
 that `claim_next` ignores unreleased jobs while `claim_specific` ignores `released` entirely,
 and that `release()` is what makes a job visible to `claim_next`).
 `tests/test_video_render.py` covers the prepare/execute split producing equivalent
-output to the combined pipeline. `tests/test_routes_worker.py` covers the full worker HTTP
+output to the combined pipeline. `tests/test_ffmpeg_utils.py` and the ffmpeg-dependent cases
+in `test_video_render.py` cover `_run_ffmpeg_with_heartbeat`'s `-progress` parsing.
+`tests/test_local_worker.py` covers `LocalRenderWorker`'s lease-fencing: a job reassigned
+mid-render (simulated by requeuing and reclaiming it from inside a monkeypatched
+`execute_prepared_render`) must not be marked done/error by the stale worker, and its
+`work_dir` must survive for whoever holds the job now; the matching non-reassigned case still
+marks done and cleans up normally. `tests/test_routes_worker.py` covers the full worker HTTP
 API using a second, lifespan-free FastAPI app (so `LocalRenderWorker` isn't running in the
 background racing the test's own manual claims) -- auth/feature-flag behavior for both
 dependencies, cross-job token isolation (job A's token can't touch job B), and two full

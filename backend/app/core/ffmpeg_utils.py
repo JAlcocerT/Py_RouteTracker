@@ -1,15 +1,58 @@
 """Thin wrappers around the ffmpeg/ffprobe CLI calls the pipeline needs.
 
-Kept deliberately dumb (no retries, no progress parsing) — subprocess calls
-to a well-known CLI, not a library to abstract over.
+Kept deliberately dumb (no retries) — subprocess calls to a well-known CLI,
+not a library to abstract over. The one exception is `trim_video` and
+`overlay_png_sequence`'s optional `on_progress`: both run as a single,
+long, blocking ffmpeg call on a large video, and that call is also the only
+heartbeat for the render job's claim lease (see
+app.render.local_worker.StaleRenderJobRequeuer) -- with no progress parsing
+at all, a big-enough source file silently starves the heartbeat and the job
+gets reclaimed as "stale" out from under a worker that's still actively
+running it.
 """
 
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 from app.core.binaries import require_binary
+
+ProgressCallback = Callable[[float], None]
+
+
+def _run_ffmpeg_with_heartbeat(cmd: list[str], total_duration: float, on_progress: ProgressCallback | None) -> None:
+    """Runs an ffmpeg command, optionally reporting fractional progress by
+    reading ffmpeg's own `-progress pipe:1` machine-readable output instead
+    of polling from outside. Falls back to a plain blocking `subprocess.run`
+    when there's no callback (or no known duration to compute a fraction
+    against) -- most ffprobe/ffmpeg call sites don't need this."""
+    if on_progress is None or total_duration <= 0:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        return
+
+    # Global options, so position relative to the rest of `cmd` doesn't
+    # matter. out_time_us is genuinely microseconds; out_time_ms has a
+    # long-standing ffmpeg quirk where it's actually also microseconds, not
+    # milliseconds, so it's avoided here.
+    cmd_with_progress = [cmd[0], "-progress", "pipe:1", "-nostats", *cmd[1:]]
+    proc = subprocess.Popen(cmd_with_progress, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    assert proc.stdout is not None
+    try:
+        for line in proc.stdout:
+            key, _, value = line.strip().partition("=")
+            if key != "out_time_us":
+                continue
+            try:
+                on_progress(min(1.0, max(0.0, int(value) / 1_000_000 / total_duration)))
+            except ValueError:
+                continue
+    finally:
+        proc.stdout.close()
+        returncode = proc.wait()
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, cmd_with_progress)
 
 
 def get_video_duration(video_path: Path) -> float:
@@ -57,7 +100,7 @@ def get_video_resolution(video_path: Path) -> tuple[int, int]:
     return int(width_str), int(height_str)
 
 
-def trim_video(source: Path, start_sec: float, end_sec: float, dest: Path) -> Path:
+def trim_video(source: Path, start_sec: float, end_sec: float, dest: Path, on_progress: ProgressCallback | None = None) -> Path:
     """Frame-accurate trim via re-encode (stream-copy trims only cut on
     keyframes, which would desync the HUD overlay from the footage)."""
     require_binary("ffmpeg")
@@ -72,7 +115,7 @@ def trim_video(source: Path, start_sec: float, end_sec: float, dest: Path) -> Pa
         "-c:a", "aac",
         str(dest),
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    _run_ffmpeg_with_heartbeat(cmd, duration, on_progress)
     return dest
 
 
@@ -82,6 +125,7 @@ def overlay_png_sequence(
     fps: float,
     output_path: Path,
     frame_pattern: str = "frame_%06d.png",
+    on_progress: ProgressCallback | None = None,
 ) -> Path:
     """Composites a transparent HUD PNG sequence onto a video via ffmpeg's
     `overlay` filter. This is the step legacy/overlay/racing_hud_v7.py never
@@ -102,5 +146,8 @@ def overlay_png_sequence(
         "-shortest",
         str(output_path),
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    # trimmed_video's own duration, not the (possibly much longer) original
+    # source -- overlay_png_sequence always runs on the already-trimmed clip.
+    total_duration = get_video_duration(trimmed_video) if on_progress else 0.0
+    _run_ffmpeg_with_heartbeat(cmd, total_duration, on_progress)
     return output_path
