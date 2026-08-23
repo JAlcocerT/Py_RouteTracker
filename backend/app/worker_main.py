@@ -52,7 +52,22 @@ def _log(name: str, message: str) -> None:
 
 
 def _claim_job(client: httpx.Client, worker_name: str) -> dict[str, Any] | None:
-    resp = client.get("/api/worker/jobs/next", params={"worker_id": worker_name})
+    # This request doesn't return until the coordinator finishes preparing
+    # the job -- trimming the (possibly large) original upload via ffmpeg
+    # re-encode -- entirely synchronously, before it writes a single byte of
+    # response. That prepare step now heartbeats the job's *database* lease
+    # (see StaleRenderJobRequeuer / ffmpeg_utils._run_ffmpeg_with_heartbeat),
+    # but that's a completely separate clock from this HTTP client's own
+    # read timeout, which is still just waiting on one long call with no
+    # bytes in between. A big enough video on modest hardware can genuinely
+    # take longer to trim than any fixed ceiling we'd guess here, so this
+    # specific call gets no read timeout at all -- same "no timeout, wait
+    # for the actual answer" stance the rest of this project takes on long
+    # server-side work (see root README's Distributed rendering section).
+    resp = client.get(
+        "/api/worker/jobs/next", params={"worker_id": worker_name},
+        timeout=httpx.Timeout(30.0, read=None),
+    )
     if resp.status_code == 204:
         return None
     resp.raise_for_status()
@@ -121,19 +136,14 @@ def run_worker(server: str, token: str, name: str, poll_interval: float, max_ren
     client = httpx.Client(
         base_url=server.rstrip("/"),
         headers={"Authorization": f"Bearer {token}"},
-        # Claiming a job runs the coordinator's prepare step synchronously
-        # before it responds (trim via ffmpeg re-encode + telemetry
-        # windowing) -- on modest/shared or ARM homelab hardware (this
-        # project explicitly supports Raspberry Pi -- see root README) that
-        # can genuinely take minutes for a real clip, not seconds. A short
-        # read timeout here doesn't make anything safer, it just turns a
-        # slow-but-working coordinator into a spurious ReadTimeout. Write
-        # gets the same long timeout for the same reason on the other end
-        # of the pipeline: /jobs/{id}/complete uploads the finished
-        # (potentially large) rendered file back to the coordinator, and the
-        # default 30s write timeout was previously left un-overridden, so a
-        # big file over a slow link could fail the upload after a full,
-        # successful render.
+        # _claim_job overrides this with an unbounded read timeout of its
+        # own -- see its comment. This default still covers every other
+        # call this client makes (progress reports, the video/telemetry
+        # downloads in _process_job). write is raised the same as read:
+        # /jobs/{id}/complete uploads the finished (potentially large)
+        # rendered file back to the coordinator, and the default 30s write
+        # timeout was previously left un-overridden, so a big file over a
+        # slow link could fail the upload after a full, successful render.
         timeout=httpx.Timeout(30.0, read=1800.0, write=1800.0),
     )
     _log(name, f"polling {server} every {poll_interval}s (max_render_workers={max_render_workers})")
@@ -177,24 +187,28 @@ def run_single_job(server: str, token: str, job_id: str, name: str, max_render_w
     client = httpx.Client(
         base_url=server.rstrip("/"),
         headers={"Authorization": f"Bearer {token}"},
-        # Claiming a job runs the coordinator's prepare step synchronously
-        # before it responds (trim via ffmpeg re-encode + telemetry
-        # windowing) -- on modest/shared or ARM homelab hardware (this
-        # project explicitly supports Raspberry Pi -- see root README) that
-        # can genuinely take minutes for a real clip, not seconds. A short
-        # read timeout here doesn't make anything safer, it just turns a
-        # slow-but-working coordinator into a spurious ReadTimeout. Write
-        # gets the same long timeout for the same reason on the other end
-        # of the pipeline: /jobs/{id}/complete uploads the finished
-        # (potentially large) rendered file back to the coordinator, and the
-        # default 30s write timeout was previously left un-overridden, so a
-        # big file over a slow link could fail the upload after a full,
-        # successful render.
+        # The initial claim below overrides this with an unbounded read
+        # timeout of its own -- see its comment. This default still covers
+        # every other call this client makes (progress reports, the video/
+        # telemetry downloads in _process_job). write is raised the same as
+        # read: /jobs/{id}/complete uploads the finished (potentially large)
+        # rendered file back to the coordinator, and the default 30s write
+        # timeout was previously left un-overridden, so a big file over a
+        # slow link could fail the upload after a full, successful render.
         timeout=httpx.Timeout(30.0, read=1800.0, write=1800.0),
     )
     _log(name, f"claiming job {job_id} on {server}")
 
-    resp = client.post(f"/api/worker/jobs/{job_id}/claim")
+    try:
+        # Blocks on the coordinator's synchronous prepare step (trim via
+        # ffmpeg re-encode of the original, possibly large, upload) before
+        # any response bytes come back -- see _claim_job's comment for why
+        # this specific call gets no read timeout at all rather than the
+        # client's 1800s default.
+        resp = client.post(f"/api/worker/jobs/{job_id}/claim", timeout=httpx.Timeout(30.0, read=None))
+    except httpx.HTTPError as exc:
+        _log(name, f"coordinator unreachable while claiming: {exc}")
+        return 1
     if resp.status_code == 409:
         _log(name, "this job is no longer available -- it's probably already rendering (or finished) elsewhere. Nothing to do.")
         return 0

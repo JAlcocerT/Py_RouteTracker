@@ -185,12 +185,23 @@ security model. Architecture:
   `POST /jobs/{id}/claim` then exit -- a 409 there means something else already has it,
   which is a clean no-op, not an error). Runs from the same Docker image already published
   by CI/CD (`docker-multiarch.yml`), just with a different `command:`. Its `httpx.Client`
-  uses `httpx.Timeout(30.0, read=1800.0, write=1800.0)` -- both `read` (claiming a job blocks
-  on the coordinator's synchronous prepare/trim step, which can take minutes on modest
-  hardware) *and* `write` are overridden to the same 30-minute ceiling as the lease itself.
-  `write` used to be left at the 30s default, which could fail `/jobs/{id}/complete` --
-  uploading the finished, potentially large rendered file back to the coordinator -- on a
-  slow link, discarding a render that had actually finished successfully.
+  uses `httpx.Timeout(30.0, read=1800.0, write=1800.0)` as a default -- `write` covers
+  `/jobs/{id}/complete` uploading the finished, potentially large rendered file back to the
+  coordinator (previously left at the 30s default, which could fail that upload on a slow
+  link, discarding a render that had actually finished successfully), and `read` covers
+  everything else that isn't overridden per-call.
+  The two calls that actually claim a job (`GET /jobs/next` inside `_claim_job`, and
+  `POST /jobs/{id}/claim` in `run_single_job`) override `read` to `None` (unbounded) instead:
+  claiming blocks on the coordinator's *synchronous* prepare/trim step, which returns no
+  response bytes at all until it's done, and that step's own duration is unbounded by design
+  (it depends on the source video's size and the coordinator's hardware, not on the lease
+  timeout -- the ffmpeg heartbeat above keeps the job's *database* lease alive during that
+  wait, but it's a different clock from this HTTP client's own read timeout, which was
+  previously still capped at 1800s and could time out on a big enough video even though the
+  coordinator was working the whole time). `run_single_job`'s claim call is also now wrapped
+  in `try/except httpx.HTTPError`, matching `run_worker`'s polling loop, so a transient
+  network issue there prints a clean message and exits instead of crashing with a raw
+  traceback.
 
 Tests: `tests/test_jobs.py` covers both claim paths directly (atomicity, kind filtering,
 requeue, that `claim_specific` doesn't disturb `claim_next`'s ordering for other queued jobs,
