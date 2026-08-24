@@ -176,7 +176,19 @@ security model. Architecture:
   scope (`POST /jobs/{id}/claim`, `GET /jobs/{id}/inputs/{video,telemetry}`, `POST
   /jobs/{id}/progress`, `POST /jobs/{id}/complete`, `POST /jobs/{id}/fail`) -- it accepts
   *either* the global token *or* that specific job's `claim_token`, so the self-render path
-  works even when `ROUTETRACKER_WORKER_TOKEN` is never set at all.
+  works even when `ROUTETRACKER_WORKER_TOKEN` is never set at all. Both `GET /jobs/next` and
+  `POST /jobs/{id}/claim` are `async def` routes that call the blocking prep step above
+  (`claim_and_prepare_render`/`claim_and_prepare_specific_render` -> `_prepare_claimed_job`'s
+  ffmpeg trim) through `await asyncio.to_thread(...)` rather than directly -- an `async def`
+  route runs on uvicorn's single event loop, and (unlike a plain `def` route, which Starlette
+  threadpools automatically) calling a long blocking function straight from one freezes that
+  event loop, and with it *every other request the server is handling*, for as long as the
+  trim takes. For a long video that's minutes, during which even the uploader's own browser
+  polling the job's status can't get a response -- indistinguishable from the job being stuck
+  forever, even though the coordinator was working the whole time. `to_thread` moves the
+  blocking call off the loop so the server stays responsive while a claim is being prepared.
+  This only mattered for the two claim routes: `LocalRenderWorker` (above) already ran the
+  same prep step on its own dedicated thread, never through these async routes at all.
 - **`app/worker_main.py`** (`python -m app.worker_main --server ... --token ...`) is the
   standalone worker CLI. Deliberately never imports `app.core.config`/`settings` at all --
   it's `httpx` calls to the coordinator plus the pure rendering functions above, into its

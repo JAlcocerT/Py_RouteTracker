@@ -19,6 +19,7 @@ security model.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 
@@ -66,7 +67,13 @@ def require_job_access(job_id: str, authorization: str | None = Header(None)) ->
 @router.get("/jobs/next")
 async def claim_next_job(worker_id: str, _auth: None = Depends(require_global_worker_token)):
     try:
-        claimed = claim_and_prepare_render(job_manager, video_store, settings, worker_id=worker_id)
+        # claim_and_prepare_render blocks synchronously on the ffmpeg trim
+        # (see coordinator._prepare_claimed_job) -- can take minutes for a
+        # long video. Run it in a worker thread so it doesn't freeze
+        # uvicorn's single event loop (and with it every other request,
+        # including this same browser's own status polling) for that whole
+        # time.
+        claimed = await asyncio.to_thread(claim_and_prepare_render, job_manager, video_store, settings, worker_id=worker_id)
     except RenderPrepFailed:
         # a job existed but couldn't be prepared -- it's already marked
         # error; tell this worker to just ask again shortly
@@ -91,7 +98,9 @@ async def claim_specific_job(job_id: str, _auth: None = Depends(require_job_acce
     built-in local worker, a persistent remote worker, or run out this same
     way already)."""
     try:
-        claimed = claim_and_prepare_specific_render(job_manager, video_store, settings, job_id, worker_id="self")
+        # See claim_next_job's comment: same blocking prep step, same need
+        # to keep it off the event loop.
+        claimed = await asyncio.to_thread(claim_and_prepare_specific_render, job_manager, video_store, settings, job_id, worker_id="self")
     except RenderPrepFailed as exc:
         raise HTTPException(409, "This job could not be prepared (it may have expired).") from exc
     if claimed is None:
