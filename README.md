@@ -49,6 +49,16 @@ extra Docker network configuration needed. If it's not reachable, check that you
 firewall (e.g. `ufw`) allows inbound connections on port 7000 from the `tailscale0`
 interface.
 
+### Install it as an app
+
+PitLane is a Progressive Web App — open it in Chrome, Edge, or a Chromium-based mobile
+browser and you'll get an install prompt (or use the browser's own "Install app" /
+"Add to Home Screen" menu entry; iOS Safari only offers the latter, under the Share
+sheet). Installed, it opens in its own window with no browser chrome, gets a real home
+screen/dock icon, and the app shell loads instantly even on a flaky connection. It still
+isn't offline-capable in any deep sense — uploading, rendering, and downloading all
+need the coordinator — installing just gets you a faster, more app-like way to reach it.
+
 ## Storage & privacy
 
 This isn't video hosting — uploaded source videos and rendered output are **temporary**.
