@@ -105,6 +105,44 @@ section h2 {
   color: var(--text-dim);
 }
 
+.self-render__advanced {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.self-render__advanced summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-dim);
+  list-style: none;
+}
+
+.self-render__advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.self-render__advanced summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--accent-dim);
+  transition: transform 0.15s ease;
+}
+
+.self-render__advanced[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.self-render__advanced summary:hover {
+  color: var(--text);
+}
+
+.self-render__advanced .self-render__title {
+  margin-top: 14px;
+  font-size: 13px;
+}
+
 /* --- upload page --- */
 
 .source-toggle {

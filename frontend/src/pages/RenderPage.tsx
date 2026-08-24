@@ -81,22 +81,26 @@ function SelfRenderSnippet({ jobId, claimToken, released }: { jobId: string; cla
 
   return (
     <div className="self-render">
-      <p className="self-render__title">Want this to render faster? Run it on your own device:</p>
-      <pre className="self-render__command">{command}</pre>
-      <button className="secondary-button" onClick={copy}>
-        {copied ? 'Copied!' : 'Copy command'}
+      <p className="self-render__title">Ready to render.</p>
+      <button className="primary-button" onClick={renderOnServer} disabled={releasing}>
+        {releasing ? 'Starting…' : 'Start rendering'}
       </button>
-      {copyFailed && (
-        <p className="self-render__hint">
-          Couldn't copy automatically — select the text above and copy it by hand instead.
-        </p>
-      )}
-      <p className="self-render__hint">
-        Needs Docker on that device. This waits for you either way — nothing renders until you decide.
-      </p>
-      <button className="secondary-button" onClick={renderOnServer} disabled={releasing}>
-        {releasing ? 'Starting…' : 'Render on the server instead'}
-      </button>
+      <p className="self-render__hint">This waits for you either way — nothing renders until you decide.</p>
+
+      <details className="self-render__advanced">
+        <summary>Got a spare gaming PC or second machine? Render there instead</summary>
+        <p className="self-render__title">Run this on that other device:</p>
+        <pre className="self-render__command">{command}</pre>
+        <button className="secondary-button" onClick={copy}>
+          {copied ? 'Copied!' : 'Copy command'}
+        </button>
+        {copyFailed && (
+          <p className="self-render__hint">
+            Couldn't copy automatically — select the text above and copy it by hand instead.
+          </p>
+        )}
+        <p className="self-render__hint">Needs Docker on that device.</p>
+      </details>
     </div>
   )
 }
