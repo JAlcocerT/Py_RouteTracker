@@ -64,6 +64,14 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
   const conversion = await Conversion.init({
     input,
     output,
+    // Without this, Conversion also considers every other input track --
+    // notably the GoPro file's own 'gpmd' GPS/telemetry track, which has no
+    // codec Conversion recognizes. That track being discarded is harmless on
+    // its own, but mixed in with a real discard reason (e.g. the browser
+    // being unable to decode/encode the video codec) it was muddying
+    // `discardedTracks` and the resulting error. Source footage only ever
+    // has one video + optionally one audio track worth keeping anyway.
+    tracks: 'primary',
     trim: { start: trimStart, end: trimEnd },
     video: {
       process: (sample) => {
@@ -73,6 +81,18 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
       },
     },
   })
+
+  if (!conversion.isValid) {
+    const reasons = conversion.discardedTracks
+      .map((d) => `${d.track.type} track #${d.track.number} (codec: ${d.track.codec ?? 'unknown'}): ${d.reason}`)
+      .join('; ')
+    throw new Error(
+      reasons
+        ? `Your browser can't render this video: ${reasons}`
+        : "Your browser can't render this video for an unknown reason -- no tracks could be read from it.",
+    )
+  }
+
   conversion.onProgress = (fraction) => onProgress?.(fraction)
   await conversion.execute()
 
