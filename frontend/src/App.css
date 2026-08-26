@@ -304,6 +304,18 @@ section h2 {
   margin-top: 8px;
 }
 
+.lap-info-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: fit-content;
+}
+
 .configure-page__map-row {
   display: grid;
   grid-template-columns: 1.3fr 1fr;

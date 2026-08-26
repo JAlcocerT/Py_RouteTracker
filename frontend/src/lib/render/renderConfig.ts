@@ -5,6 +5,7 @@
  * eye at the 1600x900 "design" canvas) scale to any other resolution. */
 export interface RenderConfig {
   enableSpeedo: boolean
+  enableLapInfo: boolean
   enableGg: boolean
   enableMinimap: boolean
   maxExpectedSpeedKmh: number
@@ -18,6 +19,7 @@ export interface RenderConfig {
 
 export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   enableSpeedo: true,
+  enableLapInfo: true,
   enableGg: true,
   enableMinimap: true,
   maxExpectedSpeedKmh: 85.0,
@@ -34,6 +36,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
 // components need no changes.
 export interface WidgetSelection {
   speedo: boolean
+  lapInfo: boolean
   gg: boolean
   minimap: boolean
 }
@@ -50,6 +53,7 @@ export interface RenderStyle {
 export function hudConfigFor(widgets: WidgetSelection, style: RenderStyle): Omit<RenderConfig, 'widthPx' | 'heightPx'> {
   return {
     enableSpeedo: widgets.speedo,
+    enableLapInfo: widgets.lapInfo,
     enableGg: widgets.gg,
     enableMinimap: widgets.minimap,
     maxExpectedSpeedKmh: style.max_expected_speed_kmh,

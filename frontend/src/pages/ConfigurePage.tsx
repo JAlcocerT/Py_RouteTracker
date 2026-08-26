@@ -22,7 +22,7 @@ interface ConfigurePageProps {
   }) => void
 }
 
-const DEFAULT_WIDGETS: WidgetSelection = { speedo: true, gg: true, minimap: true }
+const DEFAULT_WIDGETS: WidgetSelection = { speedo: true, lapInfo: true, gg: true, minimap: true }
 const DEFAULT_STYLE: RenderStyle = { theme: 'cyberpunk', max_expected_speed_kmh: 85, limit_g: 1.5 }
 
 // Speedo max defaults to the video's own recorded top speed rather than a
@@ -79,6 +79,19 @@ export function ConfigurePage({ videoFile, duration, telemetry, hasAccel, onRend
     if (best) setLapStartTime(best.time)
   }
 
+  const handleToggleLapInfo = (checked: boolean) => {
+    setWidgets((w) => ({ ...w, lapInfo: checked }))
+    if (!checked) {
+      // Riding somewhere that isn't a track/circuit -- drop any start/finish
+      // line and lap results so the render falls back to unannotated rows.
+      setStartMarker(null)
+      setLapStartTime(null)
+      setLaps([])
+      setLapIndices([])
+      setAnnotatedRows(withoutLapAnnotation(telemetry))
+    }
+  }
+
   const handleDetectLaps = () => {
     if (lapStartTime == null) return
     setDetectingLaps(true)
@@ -117,17 +130,23 @@ export function ConfigurePage({ videoFile, duration, telemetry, hasAccel, onRend
       </section>
 
       <section>
-        <h2>2. Route + lap timing (optional)</h2>
-        <div className="configure-page__map-row">
-          <MapPreview points={telemetry} startMarker={startMarker} onPickStart={handlePickStart} />
-          <div className="lap-detect">
-            <p>{lapStartTime != null ? `Start/finish line: t=${lapStartTime.toFixed(1)}s` : 'Click a point on the map to mark the start/finish line.'}</p>
-            <button disabled={lapStartTime == null || detectingLaps} onClick={handleDetectLaps}>
-              {detectingLaps ? 'Detecting…' : 'Detect laps'}
-            </button>
-            {laps.length > 0 && <LapTable telemetry={annotatedRows} lapIndices={lapIndices} laps={laps} />}
+        <h2>2. Lap timing (optional)</h2>
+        <label className="lap-info-toggle">
+          <input type="checkbox" checked={widgets.lapInfo} onChange={(e) => handleToggleLapInfo(e.target.checked)} />
+          <span>This is a track/circuit session -- show a lap counter and lap timer</span>
+        </label>
+        {widgets.lapInfo && (
+          <div className="configure-page__map-row">
+            <MapPreview points={telemetry} startMarker={startMarker} onPickStart={handlePickStart} />
+            <div className="lap-detect">
+              <p>{lapStartTime != null ? `Start/finish line: t=${lapStartTime.toFixed(1)}s` : 'Click a point on the map to mark the start/finish line.'}</p>
+              <button disabled={lapStartTime == null || detectingLaps} onClick={handleDetectLaps}>
+                {detectingLaps ? 'Detecting…' : 'Detect laps'}
+              </button>
+              {laps.length > 0 && <LapTable telemetry={annotatedRows} lapIndices={lapIndices} laps={laps} />}
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       <section>

@@ -305,33 +305,35 @@ export class HudRenderer {
       outlineWidth: linePx(3, widthPx),
     })
 
-    const [lapX, lapY] = t.toPx(0.03, 0.95)
-    outlinedText(ctx, `LAP ${Math.trunc(row.lap)}`, lapX, lapY, {
-      font: `bold ${fontPx(14, widthPx)}px sans-serif`,
-      fill: 'cyan',
-      align: 'left',
-      baseline: 'middle',
-      outlineWidth: linePx(3, widthPx),
-    })
+    if (this.config.enableLapInfo) {
+      const [lapX, lapY] = t.toPx(0.03, 0.95)
+      outlinedText(ctx, `LAP ${Math.trunc(row.lap)}`, lapX, lapY, {
+        font: `bold ${fontPx(14, widthPx)}px sans-serif`,
+        fill: 'cyan',
+        align: 'left',
+        baseline: 'middle',
+        outlineWidth: linePx(3, widthPx),
+      })
 
-    const [chronoX, chronoY] = t.toPx(0.97, 0.95)
-    outlinedText(ctx, formatLapTime(row.lap_elapsed_s), chronoX, chronoY, {
-      font: `bold ${fontPx(12, widthPx)}px sans-serif`,
-      fill: 'yellow',
-      align: 'right',
-      baseline: 'middle',
-      outlineWidth: linePx(3, widthPx),
-    })
-
-    if (row.last_lap_s > 0 && row.lap_elapsed_s < LAST_LAP_PROMPT_SECONDS) {
-      const [llX, llY] = t.toPx(0.97, 0.87)
-      outlinedText(ctx, `LAST LAP ${formatLapTime(row.last_lap_s)}`, llX, llY, {
-        font: `bold ${fontPx(11, widthPx)}px sans-serif`,
-        fill: 'white',
+      const [chronoX, chronoY] = t.toPx(0.97, 0.95)
+      outlinedText(ctx, formatLapTime(row.lap_elapsed_s), chronoX, chronoY, {
+        font: `bold ${fontPx(12, widthPx)}px sans-serif`,
+        fill: 'yellow',
         align: 'right',
         baseline: 'middle',
         outlineWidth: linePx(3, widthPx),
       })
+
+      if (row.last_lap_s > 0 && row.lap_elapsed_s < LAST_LAP_PROMPT_SECONDS) {
+        const [llX, llY] = t.toPx(0.97, 0.87)
+        outlinedText(ctx, `LAST LAP ${formatLapTime(row.last_lap_s)}`, llX, llY, {
+          font: `bold ${fontPx(11, widthPx)}px sans-serif`,
+          fill: 'white',
+          align: 'right',
+          baseline: 'middle',
+          outlineWidth: linePx(3, widthPx),
+        })
+      }
     }
   }
 
