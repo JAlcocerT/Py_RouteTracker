@@ -9,7 +9,7 @@ interface WidgetPickerProps {
 }
 
 const WIDGET_LABELS: { key: keyof WidgetSelection; label: string; hint?: string }[] = [
-  { key: 'speedo', label: 'Speedometer + lap timer' },
+  { key: 'speedo', label: 'Speedometer' },
   { key: 'gg', label: 'G-G diagram', hint: 'needs accelerometer data' },
   { key: 'minimap', label: 'Minimap' },
 ]

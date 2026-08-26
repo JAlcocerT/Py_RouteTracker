@@ -1,57 +1,31 @@
+"""Static-file server for the built frontend.
+
+Every compute-heavy feature (video trim/join, telemetry extraction, lap
+detection, HUD rendering, compositing) runs entirely in the visiting
+browser now -- see frontend/src/lib/. This backend has nothing left to
+compute; it exists only to serve the built React app, so this app/ package
+can keep being `docker run` the same way it always has (see backend/readme.md).
+"""
+
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api import routes_jobs, routes_laps, routes_render, routes_videos, routes_worker
-from app.core.cleanup import RetentionSweeper
-from app.core.state import job_manager, settings, video_store
-from app.render.local_worker import LocalRenderWorker, StaleRenderJobRequeuer
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    sweeper = RetentionSweeper(video_store, settings, job_manager, interval_seconds=settings.sweep_interval_seconds)
-    # Always on: this is what makes local-only operation work with zero
-    # config -- it's "the one worker that's always available." Any remote
-    # workers (app.worker_main) just add capacity to the same queue.
-    local_worker = LocalRenderWorker(job_manager, video_store, settings)
-    requeuer = StaleRenderJobRequeuer(job_manager, lease_minutes=settings.worker_lease_minutes)
-
-    sweeper.start()
-    local_worker.start()
-    requeuer.start()
-    yield
-    sweeper.stop()
-    local_worker.stop()
-    requeuer.stop()
-
-
-app = FastAPI(title="Py_RouteTracker Telemetry Overlay", lifespan=lifespan)
-
-app.include_router(routes_videos.router)
-app.include_router(routes_laps.router)
-app.include_router(routes_render.router)
-app.include_router(routes_jobs.router)
-app.include_router(routes_worker.router)
+app = FastAPI(title="PitLane")
 
 
 @app.get("/api/health")
 async def health():
-    return {
-        "status": "ok",
-        "retention_minutes": settings.retention_minutes,
-        "distributed_rendering_enabled": bool(settings.worker_token),
-    }
+    return {"status": "ok"}
 
 
 # Starlette matches routes in registration order, and a Mount("/") matches
 # every path as a prefix -- it must be registered last, or it shadows every
 # route above (including /api/health), swallowing them into 404s from
-# StaticFiles instead of reaching our handlers.
+# StaticFiles instead of ever reaching our handler. See test_main.py.
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "static"
 if _FRONTEND_DIST.exists():
     app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="frontend")

@@ -34,8 +34,4 @@ def test_health_endpoint_is_reachable():
     client = TestClient(app)
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "ok"
-    # retention_minutes is surfaced here so the frontend can tell users how
-    # long they have to download a rendered file before it's auto-deleted
-    assert body["retention_minutes"] > 0
+    assert resp.json()["status"] == "ok"
