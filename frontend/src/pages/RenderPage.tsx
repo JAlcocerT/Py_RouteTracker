@@ -1,154 +1,89 @@
-import { useEffect, useState } from 'react'
-import { downloadUrl, getVideo, releaseJob } from '../api/client'
-import { RenderProgress } from '../components/RenderProgress'
-import type { JobStatus } from '../types'
+import { useState } from 'react'
+import { RenderProgress, type RenderPhase } from '../components/RenderProgress'
+import type { AnnotatedRow } from '../lib/laps/detection'
+import { hasFileSystemAccess, pickSaveFile } from '../lib/output'
+import { hudConfigFor } from '../lib/render/renderConfig'
+import { runRender } from '../lib/render/runRender'
+import type { RenderStyle, WidgetSelection } from '../types'
 
 interface RenderPageProps {
-  jobId: string
-  videoId: string
-  claimToken: string
+  videoFile: File
+  trimStart: number
+  trimEnd: number
+  widgets: WidgetSelection
+  style: RenderStyle
+  annotatedRows: AnnotatedRow[]
   onStartOver: () => void
 }
 
-function formatExpiry(expiresAt: string): string {
-  const d = new Date(expiresAt)
-  const minutesLeft = Math.max(0, Math.round((d.getTime() - Date.now()) / 60000))
-  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  return `${time} (about ${minutesLeft} min from now)`
+function outputName(videoFile: File): string {
+  const base = videoFile.name.replace(/\.[^.]+$/, '')
+  return `${base}_overlay.mp4`
 }
 
-function copyText(text: string): boolean {
-  // navigator.clipboard only exists in "secure contexts" (HTTPS or
-  // localhost) -- accessing this app over plain http:// (e.g. its Tailscale
-  // IP, which is exactly how this is meant to be reached from another
-  // device) means navigator.clipboard is undefined entirely, not just
-  // permission-denied, so calling it throws synchronously. execCommand is
-  // deprecated but is the only copy mechanism that still works in that
-  // situation, so it's used as a fallback rather than the only path.
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).catch(() => {})
-    return true
-  }
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.focus()
-  textarea.select()
-  let ok = false
-  try {
-    ok = document.execCommand('copy')
-  } catch {
-    ok = false
-  }
-  document.body.removeChild(textarea)
-  return ok
-}
+export function RenderPage({ videoFile, trimStart, trimEnd, widgets, style, annotatedRows, onStartOver }: RenderPageProps) {
+  const [phase, setPhase] = useState<RenderPhase>('idle')
+  const [progress, setProgress] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [savedToDisk, setSavedToDisk] = useState(false)
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
 
-function SelfRenderSnippet({ jobId, claimToken, released }: { jobId: string; claimToken: string; released: boolean }) {
-  const [copied, setCopied] = useState(false)
-  const [copyFailed, setCopyFailed] = useState(false)
-  const [releasing, setReleasing] = useState(false)
-  const command = `docker run --rm --pull always ghcr.io/jlleongarcia/py_routetracker:latest \\\n  python -m app.worker_main --server ${window.location.origin} --job ${jobId} --token ${claimToken}`
-
-  const copy = () => {
-    if (copyText(command)) {
-      setCopyFailed(false)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } else {
-      setCopyFailed(true)
-    }
-  }
-
-  const renderOnServer = async () => {
-    setReleasing(true)
+  const handleStart = async () => {
+    setPhase('rendering')
+    setProgress(0)
+    setError(null)
     try {
-      await releaseJob(jobId)
-    } catch {
-      setReleasing(false)
+      // The save-file picker needs a user gesture, so it's opened here, at
+      // the very start of this click handler, rather than being deferred
+      // until the render finishes -- see lib/output.ts.
+      const fileHandle = hasFileSystemAccess() ? await pickSaveFile(outputName(videoFile)) : null
+
+      const blob = await runRender({
+        videoFile,
+        trimStart,
+        trimEnd,
+        config: hudConfigFor(widgets, style),
+        annotatedRows,
+        fileHandle: fileHandle ?? undefined,
+        onProgress: setProgress,
+      })
+
+      if (blob) {
+        setDownloadUrl(URL.createObjectURL(blob))
+      } else {
+        setSavedToDisk(true)
+      }
+      setPhase('done')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setPhase('error')
     }
   }
-
-  if (released) {
-    return (
-      <div className="self-render">
-        <p className="self-render__hint">Waiting for the server to pick this up — it'll start shortly.</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="self-render">
-      <p className="self-render__title">Ready to render.</p>
-      <button className="primary-button" onClick={renderOnServer} disabled={releasing}>
-        {releasing ? 'Starting…' : 'Start rendering'}
-      </button>
-      <p className="self-render__hint">This waits for you either way — nothing renders until you decide.</p>
-
-      <details className="self-render__advanced">
-        <summary>Got a spare gaming PC or second machine? Render there instead</summary>
-        <p className="self-render__title">Run this on that other device:</p>
-        <pre className="self-render__command">{command}</pre>
-        <button className="secondary-button" onClick={copy}>
-          {copied ? 'Copied!' : 'Copy command'}
-        </button>
-        {copyFailed && (
-          <p className="self-render__hint">
-            Couldn't copy automatically — select the text above and copy it by hand instead.
-          </p>
-        )}
-        <p className="self-render__hint">Needs Docker on that device.</p>
-      </details>
-    </div>
-  )
-}
-
-export function RenderPage({ jobId, videoId, claimToken, onStartOver }: RenderPageProps) {
-  const [finished, setFinished] = useState<JobStatus | null>(null)
-  const [status, setStatus] = useState<JobStatus | null>(null)
-  const [expiresAt, setExpiresAt] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    getVideo(videoId)
-      .then((meta) => {
-        if (!cancelled) setExpiresAt(meta.expires_at)
-      })
-      .catch(() => {
-        // non-critical -- the download still works even if we can't show the expiry notice
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [videoId])
 
   return (
     <div className="page render-page">
       <h1>Rendering your video</h1>
-      <p className="page__subtitle">Trimming, drawing the HUD, and compositing it onto your footage. This can take a while for long clips.</p>
+      <p className="page__subtitle">Trimming, drawing the HUD, and compositing it onto your footage -- entirely in this browser tab. This can take a while for long clips.</p>
 
-      <RenderProgress jobId={jobId} onDone={setFinished} onUpdate={setStatus} />
-
-      {status?.status === 'pending' && (
-        <SelfRenderSnippet jobId={jobId} claimToken={claimToken} released={status.released} />
+      {phase === 'idle' && (
+        <button className="primary-button" onClick={handleStart}>
+          Start rendering
+        </button>
       )}
 
-      {finished?.status === 'done' && (
+      {phase !== 'idle' && <RenderProgress phase={phase} progress={progress} error={error} />}
+
+      {phase === 'done' && (
         <>
-          <a className="primary-button" href={downloadUrl(jobId)} download>
-            Download video
-          </a>
-          <p className="expiry-notice">
-            Uploaded videos and rendered output are temporary — nothing is kept in permanent
-            storage.{' '}
-            {expiresAt ? (
-              <>This one will be automatically deleted around <strong>{formatExpiry(expiresAt)}</strong>, so download it now.</>
-            ) : (
-              <>Download it now, before it is automatically deleted.</>
-            )}
-          </p>
+          {savedToDisk ? (
+            <p className="expiry-notice">Saved to the location you chose.</p>
+          ) : (
+            downloadUrl && (
+              <a className="primary-button" href={downloadUrl} download={outputName(videoFile)}>
+                Download video
+              </a>
+            )
+          )}
         </>
       )}
 

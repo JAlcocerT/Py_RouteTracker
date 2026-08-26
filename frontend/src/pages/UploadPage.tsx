@@ -1,13 +1,16 @@
 import { useState } from 'react'
-import { fetchVideoSourceFile, getJob, joinAndUploadVideo, uploadVideo } from '../api/client'
 import { Dropzone } from '../components/Dropzone'
 import { MultiDropzone } from '../components/MultiDropzone'
 import { PartsList } from '../components/PartsList'
-import type { SourceType } from '../types'
+import { probeVideoDuration } from '../lib/mp4/probe'
+import { joinVideos } from '../lib/mp4/join'
+import { extractExternalGpx } from '../lib/telemetry/externalGpx'
+import { extractGoProGpmf } from '../lib/telemetry/goproGpmf'
+import type { SourceType, TelemetryPoint } from '../types'
 import { autoSortGoProParts } from '../utils/videoParts'
 
 interface UploadPageProps {
-  onUploaded: (videoId: string, videoFile: File) => void
+  onUploaded: (videoFile: File, duration: number, telemetry: TelemetryPoint[], hasAccel: boolean) => void
 }
 
 type UploadMode = 'single' | 'join'
@@ -20,8 +23,8 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
   const [partsAutoSorted, setPartsAutoSorted] = useState(false)
   const [gpx, setGpx] = useState<File | null>(null)
   const [videoStartTime, setVideoStartTime] = useState('')
-  const [phase, setPhase] = useState<'idle' | 'uploading' | 'extracting' | 'fetching_preview'>('idle')
-  const [uploadProgress, setUploadProgress] = useState(0)
+  const [phase, setPhase] = useState<'idle' | 'joining' | 'extracting'>('idle')
+  const [joinProgress, setJoinProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   const busy = phase !== 'idle'
@@ -41,42 +44,39 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
   }
 
   const handleSubmit = async () => {
-    setPhase('uploading')
-    setUploadProgress(0)
     setError(null)
     try {
-      const startTime = videoStartTime ? new Date(videoStartTime).toISOString() : undefined
-      let videoId: string
-      let jobId: string
-      let previewFile: File
+      let videoFile: File
 
       if (mode === 'single') {
         if (!video) return
-        const result = await uploadVideo({ video, sourceType, gpx: gpx ?? undefined, videoStartTime: startTime, onProgress: setUploadProgress })
-        videoId = result.video_id
-        jobId = result.job_id
-        previewFile = video
+        videoFile = video
       } else {
-        const result = await joinAndUploadVideo({ videoParts, sourceType, gpx: gpx ?? undefined, videoStartTime: startTime, onProgress: setUploadProgress })
-        videoId = result.video_id
-        jobId = result.job_id
-        setPhase('fetching_preview')
-        // The joined file only exists server-side (raw MP4 parts can't be
-        // concatenated into a playable blob in the browser) -- fetch it
-        // back once so the trim/preview UI has real, playable footage.
-        previewFile = await fetchVideoSourceFile(videoId, videoParts[0].name)
+        setPhase('joining')
+        setJoinProgress(0)
+        const blob = await joinVideos(videoParts, setJoinProgress)
+        videoFile = new File([blob], videoParts[0].name, { type: 'video/mp4' })
       }
 
       setPhase('extracting')
-      // poll until the background extraction job finishes
-      for (;;) {
-        const job = await getJob(jobId)
-        if (job.status === 'done') break
-        if (job.status === 'error') throw new Error(job.error ?? 'extraction failed')
-        await new Promise((r) => setTimeout(r, 600))
+      const duration = await probeVideoDuration(videoFile)
+
+      const result =
+        sourceType === 'gopro_embedded'
+          ? await extractGoProGpmf(videoFile, duration)
+          : extractExternalGpx(await gpx!.text(), duration, {
+              videoStartTime: videoStartTime ? new Date(videoStartTime) : undefined,
+            })
+
+      if (result.rows.length === 0) {
+        throw new Error(
+          sourceType === 'gopro_embedded'
+            ? 'No embedded GPS telemetry found in this video.'
+            : "The GPX track doesn't overlap the video's timeline -- check the start time.",
+        )
       }
 
-      onUploaded(videoId, previewFile)
+      onUploaded(videoFile, duration, result.rows, result.hasAccel)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setPhase('idle')
@@ -86,7 +86,7 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
   return (
     <div className="page upload-page">
       <h1>Telemetry Overlay</h1>
-      <p className="page__subtitle">Drop in a video, pick your telemetry source, and we'll extract GPS + speed data.</p>
+      <p className="page__subtitle">Drop in a video, pick your telemetry source, and we'll extract GPS + speed data -- entirely in this browser tab, nothing uploaded anywhere.</p>
 
       <div className="source-toggle">
         <button className={mode === 'single' ? 'active' : ''} onClick={() => setMode('single')} disabled={busy}>
@@ -138,18 +138,17 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
 
       {error && <p className="error-text">{error}</p>}
 
-      {phase === 'uploading' && (
+      {phase === 'joining' && (
         <div className="progress">
           <div className="progress__bar">
-            <div className="progress__fill" style={{ width: `${Math.round(uploadProgress * 100)}%` }} />
+            <div className="progress__fill" style={{ width: `${Math.round(joinProgress * 100)}%` }} />
           </div>
-          <div className="progress__label">Uploading… {Math.round(uploadProgress * 100)}%</div>
+          <div className="progress__label">Joining parts… {Math.round(joinProgress * 100)}%</div>
         </div>
       )}
 
       <button className="primary-button" disabled={!canSubmit} onClick={handleSubmit}>
-        {phase === 'uploading' && (mode === 'join' ? 'Uploading & joining…' : 'Uploading…')}
-        {phase === 'fetching_preview' && 'Preparing preview…'}
+        {phase === 'joining' && 'Joining…'}
         {phase === 'extracting' && 'Extracting telemetry…'}
         {phase === 'idle' && 'Extract telemetry'}
       </button>

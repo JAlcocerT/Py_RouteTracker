@@ -1,16 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
-import { detectLaps, getTelemetry, getVideo, startRender } from '../api/client'
 import { LapTable } from '../components/LapTable'
 import { MapPreview } from '../components/MapPreview'
 import { TelemetryChart } from '../components/TelemetryChart'
 import { VideoTrimmer } from '../components/VideoTrimmer'
 import { WidgetPicker } from '../components/WidgetPicker'
-import type { LapRow, RenderStyle, TelemetryPoint, VideoMeta, WidgetSelection } from '../types'
+import { detectLaps, type AnnotatedRow } from '../lib/laps/detection'
+import type { LapRow, RenderStyle, TelemetryPoint, WidgetSelection } from '../types'
 
 interface ConfigurePageProps {
-  videoId: string
   videoFile: File
-  onRenderStarted: (jobId: string, claimToken: string) => void
+  duration: number
+  telemetry: TelemetryPoint[]
+  hasAccel: boolean
+  onRenderStarted: (payload: {
+    videoFile: File
+    trimStart: number
+    trimEnd: number
+    widgets: WidgetSelection
+    style: RenderStyle
+    annotatedRows: AnnotatedRow[]
+  }) => void
 }
 
 const DEFAULT_WIDGETS: WidgetSelection = { speedo: true, gg: true, minimap: true }
@@ -31,43 +40,36 @@ function computeSpeedoMax(points: TelemetryPoint[]): number {
   return Math.max(SPEEDO_MIN_KMH, Math.ceil(withMargin / SPEEDO_ROUNDING_STEP_KMH) * SPEEDO_ROUNDING_STEP_KMH)
 }
 
-export function ConfigurePage({ videoId, videoFile, onRenderStarted }: ConfigurePageProps) {
-  const [meta, setMeta] = useState<VideoMeta | null>(null)
-  const [points, setPoints] = useState<TelemetryPoint[]>([])
+/** Matches app.render.coordinator._prepare_claimed_job's fallback for a
+ * video that never had lap detection run on it: flat zeros, not an error --
+ * lap widgets are opt-in, not a hard requirement to render at all. */
+function withoutLapAnnotation(points: TelemetryPoint[]): AnnotatedRow[] {
+  return points.map((p) => ({ ...p, lap: 0, last_lap_s: 0, lap_elapsed_s: 0 }))
+}
+
+export function ConfigurePage({ videoFile, duration, telemetry, hasAccel, onRenderStarted }: ConfigurePageProps) {
   const [trimStart, setTrimStart] = useState(0)
-  const [trimEnd, setTrimEnd] = useState(0)
+  const [trimEnd, setTrimEnd] = useState(duration)
   const [startMarker, setStartMarker] = useState<{ lat: number; lon: number } | null>(null)
   const [lapStartTime, setLapStartTime] = useState<number | null>(null)
   const [laps, setLaps] = useState<LapRow[]>([])
+  const [lapIndices, setLapIndices] = useState<number[]>([])
+  const [annotatedRows, setAnnotatedRows] = useState<AnnotatedRow[]>(() => withoutLapAnnotation(telemetry))
   const [detectingLaps, setDetectingLaps] = useState(false)
   const [widgets, setWidgets] = useState<WidgetSelection>(DEFAULT_WIDGETS)
-  const [style, setStyle] = useState<RenderStyle>(DEFAULT_STYLE)
+  const [style, setStyle] = useState<RenderStyle>({ ...DEFAULT_STYLE, max_expected_speed_kmh: computeSpeedoMax(telemetry) })
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   const videoUrl = useMemo(() => URL.createObjectURL(videoFile), [videoFile])
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      const [videoMeta, telemetry] = await Promise.all([getVideo(videoId), getTelemetry(videoId)])
-      if (cancelled) return
-      setMeta(videoMeta)
-      setPoints(telemetry)
-      setTrimEnd(videoMeta.duration_sec ?? 0)
-      setStyle((s) => ({ ...s, max_expected_speed_kmh: computeSpeedoMax(telemetry) }))
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [videoId])
+  useEffect(() => () => URL.revokeObjectURL(videoUrl), [videoUrl])
 
   const handlePickStart = (lat: number, lon: number) => {
     setStartMarker({ lat, lon })
     // find the nearest telemetry sample's timestamp to this coordinate
-    let best = points[0]
+    let best = telemetry[0]
     let bestDist = Infinity
-    for (const p of points) {
+    for (const p of telemetry) {
       const d = (p.lat - lat) ** 2 + (p.lon - lon) ** 2
       if (d < bestDist) {
         bestDist = d
@@ -77,13 +79,15 @@ export function ConfigurePage({ videoId, videoFile, onRenderStarted }: Configure
     if (best) setLapStartTime(best.time)
   }
 
-  const handleDetectLaps = async () => {
+  const handleDetectLaps = () => {
     if (lapStartTime == null) return
     setDetectingLaps(true)
     setError(null)
     try {
-      const result = await detectLaps(videoId, lapStartTime)
-      setLaps(result.lap_table)
+      const result = detectLaps(telemetry, startMarker!.lat, startMarker!.lon)
+      setLaps(result.lapTable)
+      setLapIndices(result.lapIndices)
+      setAnnotatedRows(result.annotatedDf)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -91,47 +95,44 @@ export function ConfigurePage({ videoId, videoFile, onRenderStarted }: Configure
     }
   }
 
-  const handleRender = async () => {
+  const handleRender = () => {
     setSubmitting(true)
     setError(null)
     try {
-      const { job_id, claim_token } = await startRender(videoId, trimStart, trimEnd, widgets, style)
-      onRenderStarted(job_id, claim_token)
+      onRenderStarted({ videoFile, trimStart, trimEnd, widgets, style, annotatedRows })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setSubmitting(false)
     }
   }
 
-  if (!meta) return <div className="page">Loading telemetry…</div>
-
   return (
     <div className="page configure-page">
-      <h1>{meta.filename}</h1>
+      <h1>{videoFile.name}</h1>
 
       <section>
         <h2>1. Trim the footage</h2>
-        <VideoTrimmer videoUrl={videoUrl} duration={meta.duration_sec ?? 0} trimStart={trimStart} trimEnd={trimEnd} onChange={(s, e) => { setTrimStart(s); setTrimEnd(e) }} />
-        <TelemetryChart points={points} trimStart={trimStart} trimEnd={trimEnd} laps={laps} lapStartTime={lapStartTime} />
+        <VideoTrimmer videoUrl={videoUrl} duration={duration} trimStart={trimStart} trimEnd={trimEnd} onChange={(s, e) => { setTrimStart(s); setTrimEnd(e) }} />
+        <TelemetryChart points={telemetry} trimStart={trimStart} trimEnd={trimEnd} laps={laps} lapStartTime={lapStartTime} />
       </section>
 
       <section>
         <h2>2. Route + lap timing (optional)</h2>
         <div className="configure-page__map-row">
-          <MapPreview points={points} startMarker={startMarker} onPickStart={handlePickStart} />
+          <MapPreview points={telemetry} startMarker={startMarker} onPickStart={handlePickStart} />
           <div className="lap-detect">
             <p>{lapStartTime != null ? `Start/finish line: t=${lapStartTime.toFixed(1)}s` : 'Click a point on the map to mark the start/finish line.'}</p>
             <button disabled={lapStartTime == null || detectingLaps} onClick={handleDetectLaps}>
               {detectingLaps ? 'Detecting…' : 'Detect laps'}
             </button>
-            {laps.length > 0 && <LapTable videoId={videoId} laps={laps} />}
+            {laps.length > 0 && <LapTable telemetry={annotatedRows} lapIndices={lapIndices} laps={laps} />}
           </div>
         </div>
       </section>
 
       <section>
         <h2>3. Choose your telemetry widgets</h2>
-        <WidgetPicker widgets={widgets} onWidgetsChange={setWidgets} style={style} onStyleChange={setStyle} hasAccel={meta.has_accel} />
+        <WidgetPicker widgets={widgets} onWidgetsChange={setWidgets} style={style} onStyleChange={setStyle} hasAccel={hasAccel} />
       </section>
 
       {error && <p className="error-text">{error}</p>}

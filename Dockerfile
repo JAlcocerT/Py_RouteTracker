@@ -7,16 +7,12 @@ COPY frontend/ ./
 RUN npm run build
 
 # --- stage 2: backend runtime ---
+# Every compute-heavy feature (trim, join, telemetry extraction, lap
+# detection, HUD rendering, compositing) now runs client-side in the
+# browser -- see frontend/src/lib/ -- so this stage has nothing left to do
+# but serve the built frontend. No ffmpeg/exiftool, no data volume: nothing
+# is ever stored server-side anymore either.
 FROM python:3.12-slim AS backend
-
-# ffmpeg provides both ffmpeg and ffprobe; libimage-exiftool-perl provides exiftool.
-# None of the original overlay/*.py scripts ever verified these were installed --
-# app.core.binaries checks for them at call time and fails with a clear error
-# instead of a buried subprocess traceback.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg \
-        libimage-exiftool-perl \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
@@ -28,9 +24,7 @@ COPY backend/app ./app
 COPY --from=frontend-build /frontend/dist ./static
 
 ENV PATH="/app/.venv/bin:$PATH"
-ENV ROUTETRACKER_DATA_DIR=/data
 
-VOLUME ["/data"]
 EXPOSE 7000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7000"]

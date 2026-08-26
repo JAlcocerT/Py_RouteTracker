@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { CartesianGrid, ComposedChart, Line, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from 'recharts'
-import { compareLaps } from '../api/client'
+import { compareLaps } from '../lib/laps/extrema'
+import type { AnnotatedRow } from '../lib/laps/detection'
 import type { LapComparison, LapRow } from '../types'
 
 interface LapTableProps {
-  videoId: string
+  telemetry: AnnotatedRow[]
+  lapIndices: number[]
   laps: LapRow[]
 }
 
@@ -12,25 +14,21 @@ function fmt(sec: number): string {
   return `${sec.toFixed(2)}s`
 }
 
-export function LapTable({ videoId, laps }: LapTableProps) {
+export function LapTable({ telemetry, lapIndices, laps }: LapTableProps) {
   const [lapA, setLapA] = useState<number | null>(laps[0]?.lap ?? null)
   const [lapB, setLapB] = useState<number | null>(laps[1]?.lap ?? null)
   const [comparison, setComparison] = useState<LapComparison | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
 
   const bestLap = laps.reduce<LapRow | null>((best, l) => (!best || l.duration < best.duration ? l : best), null)
 
-  const handleCompare = async () => {
+  const handleCompare = () => {
     if (lapA == null || lapB == null || lapA === lapB) return
-    setLoading(true)
     setError(null)
     try {
-      setComparison(await compareLaps(videoId, lapA, lapB))
+      setComparison(compareLaps(telemetry, laps, lapIndices, lapA, lapB))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -71,8 +69,8 @@ export function LapTable({ videoId, laps }: LapTableProps) {
                 <option key={l.lap} value={l.lap}>Lap {l.lap}</option>
               ))}
             </select>
-            <button onClick={handleCompare} disabled={loading || lapA === lapB}>
-              {loading ? 'Comparing…' : 'Compare'}
+            <button onClick={handleCompare} disabled={lapA === lapB}>
+              Compare
             </button>
           </div>
           {error && <p className="error-text">{error}</p>}

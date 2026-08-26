@@ -31,14 +31,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      # Installed via apt (not pip) -- these are the real runtime binaries
-      # app.core.binaries checks for, and installing them here (rather than
-      # letting the ffmpeg-dependent tests skip) means CI exercises the full
-      # extract -> render -> composite pipeline, not just the parts that
-      # don't need external binaries.
-      - name: Install ffmpeg + exiftool
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libimage-exiftool-perl
-
       - name: Install uv
         # astral-sh/setup-uv, unlike the other actions pinned in this file,
         # doesn't publish a rolling major-version tag (no bare "v9") -- only
@@ -72,6 +64,10 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm run test
 
       - name: Type-check and build
         working-directory: frontend

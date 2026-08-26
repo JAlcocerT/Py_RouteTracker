@@ -6,10 +6,11 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      // 'prompt' (not 'autoUpdate') on purpose: this app talks to a
-      // coordinator whose API can change shape across releases, so a
-      // silently-swapped service worker mid-render would be worse than
-      // asking the user to reload -- see src/pwa/UpdateToast.tsx.
+      // 'prompt' (not 'autoUpdate') on purpose: a render runs entirely in
+      // this tab (see src/lib/render/pipeline.ts), so a service worker
+      // swap that reloads mid-render would abort it outright -- asking the
+      // user to reload, rather than doing it silently underneath them, is
+      // the whole point here. See src/pwa/UpdateToast.tsx.
       registerType: 'prompt',
       injectRegister: false,
       manifest: {
@@ -29,26 +30,13 @@ export default defineConfig({
           { src: 'maskable-icon-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
-      workbox: {
-        // Everything under /api/* (uploads, status polls, the finished
-        // render download) must always hit the network -- these are large,
-        // job-scoped, and frequently-changing; Workbox is left to precache
-        // only the built app shell (JS/CSS/HTML/icons) it finds via its
-        // default globPatterns, with no runtimeCaching rules added for /api
-        // so those requests are never intercepted at all.
-        navigateFallbackDenylist: [/^\/api\//],
-      },
       devOptions: {
         enabled: false,
       },
     }),
   ],
-  server: {
-    proxy: {
-      '/api': {
-        target: process.env.VITE_BACKEND_URL ?? 'http://localhost:7000',
-        changeOrigin: true,
-      },
-    },
+  worker: {
+    // The render pipeline worker imports mediabunny/mp4box as ES modules.
+    format: 'es',
   },
 })
