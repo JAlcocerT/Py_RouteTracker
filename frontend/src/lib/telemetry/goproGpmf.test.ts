@@ -37,7 +37,8 @@ vi.mock('gopro-telemetry', () => ({
 describe('extractGoProGpmf', () => {
   it('maps GPS5 samples to km/h and resamples onto the target grid', async () => {
     const { extractGoProGpmf } = await import('./goproGpmf')
-    const result = await extractGoProGpmf({} as File, 2.0, 2.0) // 2 fps -> grid at t=0,0.5,1,1.5
+    const progress: number[] = []
+    const result = await extractGoProGpmf({} as File, 2.0, { targetFps: 2.0, onProgress: (p) => progress.push(p) }) // 2 fps -> grid at t=0,0.5,1,1.5
 
     expect(result.sourceName).toBe('gopro_embedded')
     expect(result.hasAccel).toBe(true)
@@ -45,6 +46,21 @@ describe('extractGoProGpmf', () => {
     // first sample: speed2D=10 m/s -> 36 km/h
     expect(result.rows[0].speed).toBeCloseTo(36.0, 0)
     expect(result.rows[0].lat).toBeCloseTo(50.0, 4)
+    expect(progress[progress.length - 1]).toBe(1)
+  })
+
+  it('resolves to an empty result instead of hanging when the video has no gpmd track', async () => {
+    vi.resetModules()
+    // Mirrors gpmf-extract's real behaviour for a video with no metadata
+    // track: rejects with the plain string 'Track not found' rather than an
+    // Error. Before the useWorker: false fix, the equivalent worker-based
+    // path never settled the promise at all.
+    vi.doMock('gpmf-extract', () => ({ default: vi.fn(async () => Promise.reject('Track not found')) }))
+    vi.doMock('gopro-telemetry', () => ({ default: vi.fn() }))
+    const { extractGoProGpmf } = await import('./goproGpmf')
+    const result = await extractGoProGpmf({} as File, 2.0)
+    expect(result.rows).toEqual([])
+    expect(result.sourceName).toBe('gopro_embedded')
   })
 
   it('is empty when every GPS sample is the (0,0) no-fix sentinel', async () => {
@@ -56,7 +72,7 @@ describe('extractGoProGpmf', () => {
       })),
     }))
     const { extractGoProGpmf } = await import('./goproGpmf')
-    const result = await extractGoProGpmf({} as File, 2.0, 2.0)
+    const result = await extractGoProGpmf({} as File, 2.0, { targetFps: 2.0 })
     expect(result.rows).toEqual([])
     expect(result.hasAccel).toBe(false)
   })

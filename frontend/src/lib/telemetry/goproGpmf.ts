@@ -118,13 +118,74 @@ function median(values: number[]): number {
   return m % 2 === 1 ? sorted[(m - 1) / 2] : (sorted[m / 2 - 1] + sorted[m / 2]) / 2
 }
 
+// gpmf-extract's default worker-based file reader has a bug: when the video
+// has no 'gpmd' track, it kills the reader via the browser's native
+// Worker.terminate() (see its index.js's onReady branch) -- which just ends
+// the thread silently, firing neither onmessage nor onerror. The extraction
+// promise then never settles, so this app's "Extracting telemetry" step
+// hangs forever with no error. The non-worker reader aborts through an
+// AbortController instead, which does reject correctly, so passing
+// useWorker: false both fixes that hang and sidesteps the library's own
+// documented "seems to crash on some recent browsers" risk for the worker
+// path -- see its index.d.ts. mp4box parsing runs on the main thread either
+// way (both readers hand parsed buffers to `mp4boxFile.appendBuffer` there),
+// so this isn't trading away any real offload.
+const EXTRACTION_TIMEOUT_MS = 5 * 60 * 1000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
+
+export interface GoProExtractOptions {
+  targetFps?: number
+  /** Fraction (0-1) of overall extraction progress: gpmf-extract's file read
+   * is weighted 70%, gopro-telemetry's decode the remaining 30% -- both
+   * libraries report progress on their own incomparable scales, so this is
+   * a rough split, not a measured one. */
+  onProgress?: (fraction: number) => void
+}
+
 export async function extractGoProGpmf(
   videoFile: File,
   durationSec: number,
-  targetFps = 30.0,
+  { targetFps = 30.0, onProgress }: GoProExtractOptions = {},
 ): Promise<TelemetryResult> {
-  const extracted = await gpmfExtract(videoFile, { browserMode: true })
-  const result = await goproTelemetry(extracted, { stream: ['GPS', 'ACCL'] })
+  let extracted: Parameters<typeof goproTelemetry>[0]
+  try {
+    extracted = await withTimeout(
+      gpmfExtract(videoFile, {
+        browserMode: true,
+        useWorker: false,
+        progress: (p) => onProgress?.((p / 100) * 0.7),
+      }),
+      EXTRACTION_TIMEOUT_MS,
+      'Timed out reading the video file -- it may be corrupted or unusually large.',
+    )
+  } catch (e) {
+    // Plain string rejections ('Track not found' / 'File not compatible')
+    // are gpmf-extract's own no-gpmd-track signal, not a real failure --
+    // treat them the same as "found the track but no usable GPS samples".
+    if (e === 'Track not found' || e === 'File not compatible') return emptyResult('gopro_embedded')
+    throw e
+  }
+
+  const result = await withTimeout(
+    goproTelemetry(extracted, { stream: ['GPS', 'ACCL'], progress: (p) => onProgress?.(0.7 + p * 0.3) }),
+    EXTRACTION_TIMEOUT_MS,
+    'Timed out decoding GPS telemetry from the video.',
+  )
   const telemetry = result as unknown as GoproTelemetryResult
 
   const gpsRows = gpsRowsFromSamples(findGpsSamples(telemetry))
@@ -145,5 +206,6 @@ export async function extractGoProGpmf(
     lon_g: accelResampled ? accelResampled[i].lon_g : 0.0,
   }))
 
+  onProgress?.(1)
   return { rows, sourceName: 'gopro_embedded', hasAccel }
 }

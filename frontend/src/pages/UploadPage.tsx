@@ -25,6 +25,7 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
   const [videoStartTime, setVideoStartTime] = useState('')
   const [phase, setPhase] = useState<'idle' | 'joining' | 'extracting'>('idle')
   const [joinProgress, setJoinProgress] = useState(0)
+  const [extractProgress, setExtractProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   const busy = phase !== 'idle'
@@ -59,11 +60,12 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
       }
 
       setPhase('extracting')
+      setExtractProgress(0)
       const duration = await probeVideoDuration(videoFile)
 
       const result =
         sourceType === 'gopro_embedded'
-          ? await extractGoProGpmf(videoFile, duration)
+          ? await extractGoProGpmf(videoFile, duration, { onProgress: setExtractProgress })
           : extractExternalGpx(await gpx!.text(), duration, {
               videoStartTime: videoStartTime ? new Date(videoStartTime) : undefined,
             })
@@ -144,6 +146,15 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
             <div className="progress__fill" style={{ width: `${Math.round(joinProgress * 100)}%` }} />
           </div>
           <div className="progress__label">Joining parts… {Math.round(joinProgress * 100)}%</div>
+        </div>
+      )}
+
+      {phase === 'extracting' && sourceType === 'gopro_embedded' && (
+        <div className="progress">
+          <div className="progress__bar">
+            <div className="progress__fill" style={{ width: `${Math.round(extractProgress * 100)}%` }} />
+          </div>
+          <div className="progress__label">Extracting telemetry… {Math.round(extractProgress * 100)}%</div>
         </div>
       )}
 
