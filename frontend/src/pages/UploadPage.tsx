@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Dropzone } from '../components/Dropzone'
 import { MultiDropzone } from '../components/MultiDropzone'
 import { PartsList } from '../components/PartsList'
+import { hasWebCodecsSupport, isInsecureContext } from '../lib/env'
 import { probeVideoDuration } from '../lib/mp4/probe'
 import { joinVideos } from '../lib/mp4/join'
 import { extractExternalGpx } from '../lib/telemetry/externalGpx'
@@ -89,6 +90,14 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
     <div className="page upload-page">
       <h1>Telemetry Overlay</h1>
       <p className="page__subtitle">Drop in a video, pick your telemetry source, and we'll extract GPS + speed data -- entirely in this browser tab, nothing uploaded anywhere.</p>
+
+      {!hasWebCodecsSupport() && (
+        <p className="compat-banner">
+          {isInsecureContext()
+            ? "This page is loaded over an insecure connection, so this browser won't allow video decoding/encoding here -- rendering will fail at the last step. Open this app via HTTPS, or over localhost/127.0.0.1, instead."
+            : "This browser doesn't support the video decoding/encoding APIs this app needs -- rendering will fail at the last step. Try a recent Chrome, Edge, or other Chromium-based browser."}
+        </p>
+      )}
 
       <div className="source-toggle">
         <button className={mode === 'single' ? 'active' : ''} onClick={() => setMode('single')} disabled={busy}>

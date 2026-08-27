@@ -54,15 +54,39 @@ beforeEach(() => {
 
 describe('renderVideo', () => {
   it('throws a message naming the discarded track and reason instead of calling execute', async () => {
+    // A mixed-reason discard, not all 'undecodable_source_codec' -- this
+    // should hit the general per-track message, not the WebCodecs-outage
+    // special case (covered separately below).
     conversionInit = vi.fn(async () => ({
       isValid: false,
-      discardedTracks: [{ track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'undecodable_source_codec' }],
+      discardedTracks: [{ track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'max_track_count_of_type_reached' }],
       execute: executeMock,
     }))
 
     await expect(
       renderVideo({} as File, { trimStart: 0, trimEnd: 1, config: DEFAULT_RENDER_CONFIG, annotatedRows: [row] }),
-    ).rejects.toThrow(/video track #1 \(codec: hevc\): undecodable_source_codec/)
+    ).rejects.toThrow(/video track #1 \(codec: hevc\): max_track_count_of_type_reached/)
+    expect(executeMock).not.toHaveBeenCalled()
+  })
+
+  it('blames the real cause -- no WebCodecs support -- when every track is discarded as undecodable', async () => {
+    // Reproduces a real report: every track (video AND an ordinarily
+    // universally-decodable audio codec like aac) coming back
+    // 'undecodable_source_codec' isn't really a per-codec gap -- it's
+    // VideoDecoder/AudioDecoder being entirely absent (e.g. an insecure
+    // context, like this app's own documented plain-http Tailscale URL).
+    conversionInit = vi.fn(async () => ({
+      isValid: false,
+      discardedTracks: [
+        { track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'undecodable_source_codec' },
+        { track: { type: 'audio', number: 1, codec: 'aac' }, reason: 'undecodable_source_codec' },
+      ],
+      execute: executeMock,
+    }))
+
+    await expect(
+      renderVideo({} as File, { trimStart: 0, trimEnd: 1, config: DEFAULT_RENDER_CONFIG, annotatedRows: [row] }),
+    ).rejects.toThrow(/WebCodecs/)
     expect(executeMock).not.toHaveBeenCalled()
   })
 

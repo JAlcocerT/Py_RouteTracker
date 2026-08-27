@@ -51,6 +51,15 @@ extra Docker network configuration needed. If it's not reachable, check that you
 firewall (e.g. `ufw`) allows inbound connections on port 7000 from the `tailscale0`
 interface.
 
+> [!WARNING]
+> Rendering depends on WebCodecs, which browsers only expose in a *secure context*
+> (HTTPS, or the special-cased `localhost`/`127.0.0.1`). Plain `http://` access over
+> Tailscale — including the MagicDNS URL above — is **not** a secure context, so
+> rendering will fail there even though upload, trimming, and telemetry extraction work
+> fine. Serve HTTPS instead, e.g. via [`tailscale serve`](https://tailscale.com/kb/1242/tailscale-serve)
+> pointed at this container's port 7000 (gives you a `https://<magicdns-name>.<tailnet>.ts.net`
+> URL with a real, trusted cert) or your own reverse proxy in front of the container.
+
 ### Install it as an app
 
 PitLane is a Progressive Web App — open it in Chrome, Edge, or a Chromium-based mobile

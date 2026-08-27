@@ -19,6 +19,7 @@
  * wrong would misalign the HUD against the footage without erroring.
  */
 import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, StreamTarget } from 'mediabunny'
+import { hasWebCodecsSupport, isInsecureContext } from '../env'
 import type { AnnotatedRow } from '../laps/detection'
 import { HudRenderer } from './hudRenderer'
 import type { RenderConfig } from './renderConfig'
@@ -83,6 +84,20 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
   })
 
   if (!conversion.isValid) {
+    // A whole-page VideoDecoder/AudioDecoder outage (not a real per-codec
+    // gap) shows up here as every track being discarded as
+    // 'undecodable_source_codec' regardless of what codec it actually is --
+    // catch that case with a message that names the real cause instead of
+    // one that reads like this specific video's codec isn't supported.
+    const allUndecodable = conversion.discardedTracks.length > 0 && conversion.discardedTracks.every((d) => d.reason === 'undecodable_source_codec')
+    if (allUndecodable && !hasWebCodecsSupport()) {
+      throw new Error(
+        isInsecureContext()
+          ? "This page can't decode or encode video because it's loaded over an insecure connection -- WebCodecs (which rendering depends on) is only available over HTTPS or from localhost. Open this app via HTTPS, or over localhost/127.0.0.1, instead."
+          : "This browser doesn't support the WebCodecs APIs this app needs to decode and encode video. Try a recent Chrome, Edge, or other Chromium-based browser.",
+      )
+    }
+
     const reasons = conversion.discardedTracks
       .map((d) => `${d.track.type} track #${d.track.number} (codec: ${d.track.codec ?? 'unknown'}): ${d.reason}`)
       .join('; ')

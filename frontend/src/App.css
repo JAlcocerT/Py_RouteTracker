@@ -71,6 +71,17 @@ section h2 {
   color: var(--accent);
 }
 
+.compat-banner {
+  margin: 16px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--warning);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--warning);
+  font-size: 13px;
+  max-width: 640px;
+}
+
 /* --- upload page --- */
 
 .source-toggle {
