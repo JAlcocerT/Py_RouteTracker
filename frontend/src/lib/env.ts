@@ -36,6 +36,33 @@ export async function checkActionCamCodecSupport(): Promise<{ h264: boolean; hev
   return { h264, hevc, aac }
 }
 
+export type OutputContainer = 'mp4' | 'webm'
+
+/**
+ * Picks a container whose codecs this browser can actually *encode*.
+ *
+ * MP4 is preferred because it's what every phone, TV and editor opens
+ * without complaint -- but it needs H.264/HEVC, which a browser lacking the
+ * licensed codecs can't produce. Those same builds always ship VP8/VP9 and
+ * Opus (royalty-free, so no licensing to omit), which is precisely what
+ * WebM carries. Probing here rather than assuming means the software-decode
+ * fallback doesn't get all the way through a slow transcode only to fail at
+ * the final encode.
+ *
+ * Called before the save-file picker opens so the suggested filename
+ * matches what actually gets written.
+ */
+export async function pickOutputContainer(): Promise<OutputContainer> {
+  if (!hasWebCodecsSupport()) return 'mp4'
+  try {
+    const { getFirstEncodableVideoCodec } = await import('mediabunny')
+    const mp4Codec = await getFirstEncodableVideoCodec(['avc', 'hevc'])
+    return mp4Codec ? 'mp4' : 'webm'
+  } catch {
+    return 'mp4'
+  }
+}
+
 /** Turns the checks above into one user-facing message, or `null` if
  * rendering should work fine. Ordered from "nothing will decode at all" down
  * to the narrower, more common gaps, so the message names the actual

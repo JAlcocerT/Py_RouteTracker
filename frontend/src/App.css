@@ -243,6 +243,33 @@ section h2 {
   max-height: 420px;
 }
 
+.video-trimmer__no-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px;
+  border: 1px dashed var(--warning);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.video-trimmer__no-preview strong {
+  color: var(--warning);
+}
+
+.video-trimmer__manual {
+  display: flex;
+  gap: 20px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.video-trimmer__manual input {
+  width: 110px;
+}
+
 .video-trimmer__range {
   position: relative;
   height: 32px;
@@ -441,6 +468,17 @@ section h2 {
   margin-top: 8px;
   color: var(--text-dim);
   font-size: 13px;
+}
+
+.progress__note {
+  margin-top: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--warning);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--warning);
+  font-size: 13px;
+  max-width: 640px;
 }
 
 /* --- PWA: install prompt, update toast --- */

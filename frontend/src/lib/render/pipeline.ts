@@ -18,12 +18,14 @@
  * trim window) is assumed, not confirmed, to be the former; getting this
  * wrong would misalign the HUD against the footage without erroring.
  */
-import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, StreamTarget } from 'mediabunny'
+import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, StreamTarget, WebMOutputFormat } from 'mediabunny'
+import type { OutputContainer } from '../env'
 import type { DiscardedTrack } from 'mediabunny'
 import { hasWebCodecsSupport, isInsecureContext } from '../env'
 import type { AnnotatedRow } from '../laps/detection'
 import { HudRenderer } from './hudRenderer'
 import type { RenderConfig } from './renderConfig'
+import { transcodeForCompatibility } from './wasmTranscode'
 
 interface DiscardedTrackDiagnostic {
   type: string
@@ -78,14 +80,32 @@ export interface RenderVideoOptions {
    * already correct relative to the full session and are not recomputed. */
   annotatedRows: AnnotatedRow[]
   onProgress?: (fraction: number) => void
+  /** Names the phase the render is currently in, so the UI can say
+   * "Converting…" during the (much slower) software-decode fallback rather
+   * than leaving a progress bar to crawl with no explanation. */
+  onStage?: (stage: RenderStage) => void
   /** When given, output is streamed directly to this sink (e.g. a
    * FileSystemWritableFileStream from window.showSaveFilePicker) instead of
    * being buffered entirely in memory. */
   outputStream?: WritableStream
+  /** Internal: cleared when re-entering after a software transcode, so a
+   * still-undecodable file reports the real error instead of looping. */
+  allowWasmFallback?: boolean
+  /** Chosen by the caller via `pickOutputContainer` before the save-file
+   * picker opens, so the suggested filename matches what's written. */
+  outputContainer?: OutputContainer
 }
 
+export type RenderStage = 'rendering' | 'transcoding'
+
+/** How much of the overall progress bar the software transcode owns when it
+ * runs. It's by far the slower of the two phases, so it gets the larger
+ * share -- the split only has to be monotonic and roughly proportionate,
+ * since the two phases have no comparable unit of work. */
+const TRANSCODE_PROGRESS_SHARE = 0.7
+
 export async function renderVideo(videoFile: File, options: RenderVideoOptions): Promise<Blob | null> {
-  const { trimStart, trimEnd, config, annotatedRows, onProgress, outputStream } = options
+  const { trimStart, trimEnd, config, annotatedRows, onProgress, onStage, outputStream, allowWasmFallback = true, outputContainer = 'mp4' } = options
   const windowedRows = annotatedRows.filter((r) => r.time >= trimStart && r.time <= trimEnd)
   if (windowedRows.length === 0) throw new Error('No telemetry samples in the selected trim range')
 
@@ -105,7 +125,7 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
   if (!ctx) throw new Error('Could not acquire a 2D canvas context')
 
   const target = outputStream ? new StreamTarget(outputStream as WritableStream<never>) : new BufferTarget()
-  const output = new Output({ format: new Mp4OutputFormat(), target })
+  const output = new Output({ format: outputContainer === 'webm' ? new WebMOutputFormat() : new Mp4OutputFormat(), target })
 
   const conversion = await Conversion.init({
     input,
@@ -150,12 +170,44 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
       // The whole API is missing, not just support for this file's codecs --
       // every track gets discarded as 'undecodable_source_codec' regardless
       // of what codec it actually is, which reads exactly like a codec
-      // problem below. Name the real cause instead.
+      // problem below. Name the real cause instead. Checked ahead of the
+      // software-decode fallback below: that fallback re-encodes to VP8,
+      // which pass two still decodes through WebCodecs -- so with the API
+      // absent entirely there is nothing for it to fall back *to*, and
+      // transcoding would just burn minutes to reach this same error.
       throw new Error(
         isInsecureContext()
           ? "This page can't decode or encode video because it's loaded over an insecure connection -- WebCodecs (which rendering depends on) is only available over HTTPS or from localhost. Open this app via HTTPS, or over localhost/127.0.0.1, instead."
           : "This browser doesn't support the WebCodecs APIs this app needs to decode and encode video. Try a recent Chrome, Edge, or other Chromium-based browser.",
       )
+    }
+
+    // Nothing about this browser's own decoders is going to change, so
+    // rather than reporting a dead end, decode the footage ourselves.
+    // Deliberately gated on `undecodable_source_codec`: a track discarded
+    // for any other reason (no encodable target, track limits) wouldn't be
+    // helped by re-encoding the input, and burning minutes of the user's
+    // CPU to arrive at the same failure would be worse than failing now.
+    const undecodable = diagnostics.filter((d) => d.reason === 'undecodable_source_codec')
+    if (undecodable.length > 0 && allowWasmFallback) {
+      onStage?.('transcoding')
+      const compatible = await transcodeForCompatibility(videoFile, {
+        trimStart,
+        trimEnd,
+        onProgress: (f) => onProgress?.(f * TRANSCODE_PROGRESS_SHARE),
+      })
+      onStage?.('rendering')
+      return renderVideo(compatible, {
+        ...options,
+        // The transcode already applied the trim and rebased the result to
+        // zero, so the second pass must not trim again -- and the telemetry
+        // has to shift by the same amount to stay aligned with the footage.
+        trimStart: 0,
+        trimEnd: trimEnd - trimStart,
+        annotatedRows: annotatedRows.map((r) => ({ ...r, time: r.time - trimStart })),
+        onProgress: (f) => onProgress?.(TRANSCODE_PROGRESS_SHARE + f * (1 - TRANSCODE_PROGRESS_SHARE)),
+        allowWasmFallback: false,
+      })
     }
 
     const detail = diagnostics.map((d) => `${d.type} track #${d.number} (codec: ${d.codec}): ${d.reason} [${d.configSummary}]`).join('; ')
@@ -170,5 +222,5 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
   await conversion.execute()
 
   if (outputStream) return null
-  return new Blob([(target as BufferTarget).buffer!], { type: 'video/mp4' })
+  return new Blob([(target as BufferTarget).buffer!], { type: outputContainer === 'webm' ? 'video/webm' : 'video/mp4' })
 }

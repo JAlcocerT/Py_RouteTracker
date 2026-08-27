@@ -13,6 +13,29 @@ export default defineConfig({
       // the whole point here. See src/pwa/UpdateToast.tsx.
       registerType: 'prompt',
       injectRegister: false,
+      workbox: {
+        // ffmpeg.wasm's core is ~32MB and only ever loads on the
+        // software-decode fallback path (see lib/render/wasmTranscode.ts),
+        // which most users never hit. Precaching it would push a 32MB
+        // download onto every install for a feature they'll likely never
+        // use -- so it's excluded here and fetched on demand instead.
+        globIgnores: ['**/ffmpeg-core*.wasm'],
+        runtimeCaching: [
+          {
+            // Once a user *has* paid the download, keep it: this path is
+            // for people whose browser always needs it, so re-fetching
+            // 32MB per render would be a poor trade. CacheFirst is safe
+            // because the filename is content-hashed.
+            urlPattern: /ffmpeg-core.*\.wasm$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'ffmpeg-core-wasm',
+              expiration: { maxEntries: 2 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+        ],
+      },
       manifest: {
         name: 'PitLane — Telemetry Overlay Studio',
         short_name: 'PitLane',

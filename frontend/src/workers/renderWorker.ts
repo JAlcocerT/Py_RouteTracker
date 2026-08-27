@@ -5,8 +5,9 @@
  * this). Runs standalone: it can't hold a `FileSystemWritableFileStream`
  * across the postMessage boundary (not structured-cloneable), so a
  * `FileSystemFileHandle` is passed instead and turned into a writable here. */
+import type { OutputContainer } from '../lib/env'
 import type { AnnotatedRow } from '../lib/laps/detection'
-import { renderVideo } from '../lib/render/pipeline'
+import { renderVideo, type RenderStage } from '../lib/render/pipeline'
 import type { RenderConfig } from '../lib/render/renderConfig'
 
 export interface RenderWorkerRequest {
@@ -16,15 +17,17 @@ export interface RenderWorkerRequest {
   config: Omit<RenderConfig, 'widthPx' | 'heightPx'>
   annotatedRows: AnnotatedRow[]
   fileHandle?: FileSystemFileHandle
+  outputContainer?: OutputContainer
 }
 
 export type RenderWorkerResponse =
   | { type: 'progress'; progress: number }
+  | { type: 'stage'; stage: RenderStage }
   | { type: 'done'; blob: Blob | null }
   | { type: 'error'; message: string }
 
 self.onmessage = async (event: MessageEvent<RenderWorkerRequest>) => {
-  const { videoFile, trimStart, trimEnd, config, annotatedRows, fileHandle } = event.data
+  const { videoFile, trimStart, trimEnd, config, annotatedRows, fileHandle, outputContainer } = event.data
   try {
     const outputStream = fileHandle ? await fileHandle.createWritable() : undefined
     const blob = await renderVideo(videoFile, {
@@ -32,9 +35,14 @@ self.onmessage = async (event: MessageEvent<RenderWorkerRequest>) => {
       trimEnd,
       config,
       annotatedRows,
+      outputContainer,
       outputStream,
       onProgress: (progress) => {
         const message: RenderWorkerResponse = { type: 'progress', progress }
+        self.postMessage(message)
+      },
+      onStage: (stage) => {
+        const message: RenderWorkerResponse = { type: 'stage', stage }
         self.postMessage(message)
       },
     })
