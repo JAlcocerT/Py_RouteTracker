@@ -19,10 +19,55 @@
  * wrong would misalign the HUD against the footage without erroring.
  */
 import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, StreamTarget } from 'mediabunny'
+import type { DiscardedTrack } from 'mediabunny'
 import { hasWebCodecsSupport, isInsecureContext } from '../env'
 import type { AnnotatedRow } from '../laps/detection'
 import { HudRenderer } from './hudRenderer'
 import type { RenderConfig } from './renderConfig'
+
+interface DiscardedTrackDiagnostic {
+  type: string
+  number: number
+  codec: string
+  reason: string
+  configSummary: string
+}
+
+/** Captures exactly what config each discarded track's real decode check was
+ * built from -- the file's actual codec/description/resolution/sample rate,
+ * not the generic guessed config `checkActionCamCodecSupport` (lib/env.ts)
+ * probes with -- so a real failure report carries the actual cause instead
+ * of another guess (the previous message here guessed "licensed codec
+ * support gap", which didn't hold up against a real report of AAC failing
+ * on an official Chrome install). Never throws: test doubles for
+ * `Conversion` don't implement the full InputTrack interface, and a
+ * diagnostics failure shouldn't take down the real error path either way --
+ * both fall back to "no decoder config available" via the catch below. */
+async function describeDiscardedTracks(discardedTracks: readonly DiscardedTrack[]): Promise<DiscardedTrackDiagnostic[]> {
+  return Promise.all(
+    discardedTracks.map(async (d) => {
+      const track = d.track
+      let configSummary = 'no decoder config available'
+      try {
+        if (track.isVideoTrack()) {
+          configSummary = summarizeDecoderConfig(await track.getDecoderConfig())
+        } else if (track.isAudioTrack()) {
+          configSummary = summarizeDecoderConfig(await track.getDecoderConfig())
+        }
+      } catch {
+        // best-effort, see docstring above
+      }
+      return { type: track.type, number: track.number, codec: track.codec ?? 'unknown', reason: d.reason, configSummary }
+    }),
+  )
+}
+
+function summarizeDecoderConfig(config: VideoDecoderConfig | AudioDecoderConfig | null): string {
+  if (!config) return 'no decoder config available'
+  const { description, ...rest } = config
+  const descriptionBytes = description == null ? 0 : ArrayBuffer.isView(description) ? description.byteLength : (description as ArrayBuffer).byteLength
+  return JSON.stringify({ ...rest, descriptionBytes })
+}
 
 export interface RenderVideoOptions {
   trimStart: number
@@ -84,7 +129,22 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
   })
 
   if (!conversion.isValid) {
-    const undecodable = conversion.discardedTracks.filter((d) => d.reason === 'undecodable_source_codec')
+    // The generic per-codec 'undecodable_source_codec' message guessed at a
+    // cause (licensed-codec-support gap) that turned out not to explain a
+    // real report -- an official Chrome install with AAC failing alongside
+    // HEVC, which shouldn't happen since Chrome bundles AAC decode
+    // everywhere. Rather than guess again, capture exactly what config each
+    // track's real decoder check was built from (not the generic guessed
+    // config `checkActionCamCodecSupport` in lib/env.ts probes with) so the
+    // next report carries the actual cause instead of another theory.
+    const diagnostics = await describeDiscardedTracks(conversion.discardedTracks)
+    // eslint-disable-next-line no-console
+    console.error(
+      '[renderVideo] Conversion invalid -- discarded tracks:',
+      diagnostics,
+      'userAgent:',
+      typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+    )
 
     if (!hasWebCodecsSupport()) {
       // The whole API is missing, not just support for this file's codecs --
@@ -98,29 +158,10 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
       )
     }
 
-    if (undecodable.length > 0) {
-      // WebCodecs itself is present and working -- VideoDecoder/AudioDecoder
-      // just don't support these specific codecs. GoPro (and most action
-      // cams) record H.264/HEVC video with AAC audio, all three of which are
-      // patent-licensed: many Linux distro-packaged Chromium/Chrome builds
-      // (and some Firefox builds) ship without that licensed codec support
-      // at all, so this is the single most likely cause when every track
-      // fails together like this.
-      const codecs = [...new Set(undecodable.map((d) => d.track.codec ?? 'unknown'))].join(', ')
-      throw new Error(
-        `Your browser can't decode this video's codec (${codecs}). This is common on Linux with a distro-packaged ` +
-          "Chromium/Chrome build, which often ships without licensed codec support for H.264/HEVC/AAC. Try Google " +
-          'Chrome or Microsoft Edge (official builds, both include this codec support), or re-encode the video to ' +
-          'a royalty-free codec (e.g. VP9/AV1 video, Opus audio) before uploading.',
-      )
-    }
-
-    const reasons = conversion.discardedTracks
-      .map((d) => `${d.track.type} track #${d.track.number} (codec: ${d.track.codec ?? 'unknown'}): ${d.reason}`)
-      .join('; ')
+    const detail = diagnostics.map((d) => `${d.type} track #${d.number} (codec: ${d.codec}): ${d.reason} [${d.configSummary}]`).join('; ')
     throw new Error(
-      reasons
-        ? `Your browser can't render this video: ${reasons}`
+      detail
+        ? `Your browser can't render this video: ${detail} -- open the browser console for the full decoder config (helps diagnose exactly why).`
         : "Your browser can't render this video for an unknown reason -- no tracks could be read from it.",
     )
   }

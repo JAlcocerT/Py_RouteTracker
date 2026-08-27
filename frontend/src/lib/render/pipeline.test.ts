@@ -48,8 +48,11 @@ vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas)
 
 const row = { time: 0, lat: 0, lon: 0, speed: 0, lat_g: 0, lon_g: 0, lap: 0, last_lap_s: 0, lap_elapsed_s: 0 }
 
+const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
 beforeEach(() => {
   executeMock.mockClear()
+  consoleErrorSpy.mockClear()
   // Present by default (WebCodecs itself works) -- the one test that needs
   // the API genuinely missing overrides this for itself.
   vi.stubGlobal('VideoDecoder', class {})
@@ -70,14 +73,15 @@ describe('renderVideo', () => {
     expect(executeMock).not.toHaveBeenCalled()
   })
 
-  it('explains the licensed-codec gap when every track is undecodable but WebCodecs itself works', async () => {
+  it('logs per-track diagnostics and points at the console when tracks are undecodable but WebCodecs itself works', async () => {
     // Reproduces a real report: video (hevc) AND audio (an ordinarily
     // near-universally-decodable codec, aac) both coming back
     // 'undecodable_source_codec' together, even though VideoDecoder/
-    // AudioDecoder are present and functional -- the signature of a
-    // browser build (e.g. distro-packaged Linux Chromium/Chrome) that
-    // implements WebCodecs but ships without licensed H.264/HEVC/AAC
-    // decoder support, not of the API being unavailable altogether.
+    // AudioDecoder are present and functional -- an earlier version of this
+    // message guessed "licensed codec support gap", which didn't hold up
+    // against this exact report on an official Chrome install. Rather than
+    // guess a specific cause again, this should surface the real decoder
+    // config for diagnosis instead.
     conversionInit = vi.fn(async () => ({
       isValid: false,
       discardedTracks: [
@@ -89,8 +93,16 @@ describe('renderVideo', () => {
 
     await expect(
       renderVideo({} as File, { trimStart: 0, trimEnd: 1, config: DEFAULT_RENDER_CONFIG, annotatedRows: [row] }),
-    ).rejects.toThrow(/can't decode this video's codec \(hevc, aac\)/)
+    ).rejects.toThrow(
+      /video track #1 \(codec: hevc\): undecodable_source_codec.*audio track #1 \(codec: aac\): undecodable_source_codec.*open the browser console/,
+    )
     expect(executeMock).not.toHaveBeenCalled()
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('discarded tracks'),
+      expect.arrayContaining([expect.objectContaining({ type: 'video', codec: 'hevc' }), expect.objectContaining({ type: 'audio', codec: 'aac' })]),
+      expect.anything(),
+      expect.anything(),
+    )
   })
 
   it('blames missing WebCodecs support, not codec licensing, when the API itself is unavailable', async () => {
