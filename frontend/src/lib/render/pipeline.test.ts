@@ -50,13 +50,14 @@ const row = { time: 0, lat: 0, lon: 0, speed: 0, lat_g: 0, lon_g: 0, lap: 0, las
 
 beforeEach(() => {
   executeMock.mockClear()
+  // Present by default (WebCodecs itself works) -- the one test that needs
+  // the API genuinely missing overrides this for itself.
+  vi.stubGlobal('VideoDecoder', class {})
+  vi.stubGlobal('AudioDecoder', class {})
 })
 
 describe('renderVideo', () => {
-  it('throws a message naming the discarded track and reason instead of calling execute', async () => {
-    // A mixed-reason discard, not all 'undecodable_source_codec' -- this
-    // should hit the general per-track message, not the WebCodecs-outage
-    // special case (covered separately below).
+  it('throws a message naming the discarded track and reason for a non-codec discard', async () => {
     conversionInit = vi.fn(async () => ({
       isValid: false,
       discardedTracks: [{ track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'max_track_count_of_type_reached' }],
@@ -69,12 +70,14 @@ describe('renderVideo', () => {
     expect(executeMock).not.toHaveBeenCalled()
   })
 
-  it('blames the real cause -- no WebCodecs support -- when every track is discarded as undecodable', async () => {
-    // Reproduces a real report: every track (video AND an ordinarily
-    // universally-decodable audio codec like aac) coming back
-    // 'undecodable_source_codec' isn't really a per-codec gap -- it's
-    // VideoDecoder/AudioDecoder being entirely absent (e.g. an insecure
-    // context, like this app's own documented plain-http Tailscale URL).
+  it('explains the licensed-codec gap when every track is undecodable but WebCodecs itself works', async () => {
+    // Reproduces a real report: video (hevc) AND audio (an ordinarily
+    // near-universally-decodable codec, aac) both coming back
+    // 'undecodable_source_codec' together, even though VideoDecoder/
+    // AudioDecoder are present and functional -- the signature of a
+    // browser build (e.g. distro-packaged Linux Chromium/Chrome) that
+    // implements WebCodecs but ships without licensed H.264/HEVC/AAC
+    // decoder support, not of the API being unavailable altogether.
     conversionInit = vi.fn(async () => ({
       isValid: false,
       discardedTracks: [
@@ -86,7 +89,22 @@ describe('renderVideo', () => {
 
     await expect(
       renderVideo({} as File, { trimStart: 0, trimEnd: 1, config: DEFAULT_RENDER_CONFIG, annotatedRows: [row] }),
-    ).rejects.toThrow(/WebCodecs/)
+    ).rejects.toThrow(/can't decode this video's codec \(hevc, aac\)/)
+    expect(executeMock).not.toHaveBeenCalled()
+  })
+
+  it('blames missing WebCodecs support, not codec licensing, when the API itself is unavailable', async () => {
+    vi.stubGlobal('VideoDecoder', undefined)
+    vi.stubGlobal('AudioDecoder', undefined)
+    conversionInit = vi.fn(async () => ({
+      isValid: false,
+      discardedTracks: [{ track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'undecodable_source_codec' }],
+      execute: executeMock,
+    }))
+
+    await expect(
+      renderVideo({} as File, { trimStart: 0, trimEnd: 1, config: DEFAULT_RENDER_CONFIG, annotatedRows: [row] }),
+    ).rejects.toThrow(/WebCodecs APIs this app needs/)
     expect(executeMock).not.toHaveBeenCalled()
   })
 

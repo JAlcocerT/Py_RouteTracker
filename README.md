@@ -70,6 +70,24 @@ screen/dock icon, and — since every feature runs client-side — it keeps work
 offline after the first load: no server round-trip is needed to upload, extract, render,
 or download anything.
 
+### Browser requirements for rendering
+
+Rendering (the final "draw the HUD onto the footage" step) depends on
+[WebCodecs](https://developer.mozilla.org/en-US/docs/Web/API/WebCodecs_API) actually being
+able to decode/encode your footage's codecs — upload, trimming, and telemetry extraction
+don't need this and will always work. Two distinct things can break it, and the app will
+warn you on the upload screen if either applies:
+
+- **WebCodecs itself isn't available.** It's only exposed in a *secure context* (HTTPS, or
+  the special-cased `localhost`/`127.0.0.1`) — a plain `http://` origin, like the Tailscale
+  URL above, isn't one. Serve HTTPS instead (see the Tailscale section's warning).
+- **WebCodecs is available, but this browser build can't decode H.264/HEVC/AAC.** These are
+  all patent-licensed codecs, and action cams (GoPro included) almost always record in them.
+  Many Linux distro-packaged Chromium/Chrome builds implement WebCodecs correctly but ship
+  without licensed codec support at all — this looks identical to a real codec problem, but
+  it's actually a browser build gap. Use the official Google Chrome or Microsoft Edge build
+  instead (both bundle this codec support).
+
 ## Storage & privacy
 
 Nothing is stored server-side, because nothing is ever sent server-side. Your video, GPX

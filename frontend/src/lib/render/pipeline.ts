@@ -84,17 +84,34 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
   })
 
   if (!conversion.isValid) {
-    // A whole-page VideoDecoder/AudioDecoder outage (not a real per-codec
-    // gap) shows up here as every track being discarded as
-    // 'undecodable_source_codec' regardless of what codec it actually is --
-    // catch that case with a message that names the real cause instead of
-    // one that reads like this specific video's codec isn't supported.
-    const allUndecodable = conversion.discardedTracks.length > 0 && conversion.discardedTracks.every((d) => d.reason === 'undecodable_source_codec')
-    if (allUndecodable && !hasWebCodecsSupport()) {
+    const undecodable = conversion.discardedTracks.filter((d) => d.reason === 'undecodable_source_codec')
+
+    if (!hasWebCodecsSupport()) {
+      // The whole API is missing, not just support for this file's codecs --
+      // every track gets discarded as 'undecodable_source_codec' regardless
+      // of what codec it actually is, which reads exactly like a codec
+      // problem below. Name the real cause instead.
       throw new Error(
         isInsecureContext()
           ? "This page can't decode or encode video because it's loaded over an insecure connection -- WebCodecs (which rendering depends on) is only available over HTTPS or from localhost. Open this app via HTTPS, or over localhost/127.0.0.1, instead."
           : "This browser doesn't support the WebCodecs APIs this app needs to decode and encode video. Try a recent Chrome, Edge, or other Chromium-based browser.",
+      )
+    }
+
+    if (undecodable.length > 0) {
+      // WebCodecs itself is present and working -- VideoDecoder/AudioDecoder
+      // just don't support these specific codecs. GoPro (and most action
+      // cams) record H.264/HEVC video with AAC audio, all three of which are
+      // patent-licensed: many Linux distro-packaged Chromium/Chrome builds
+      // (and some Firefox builds) ship without that licensed codec support
+      // at all, so this is the single most likely cause when every track
+      // fails together like this.
+      const codecs = [...new Set(undecodable.map((d) => d.track.codec ?? 'unknown'))].join(', ')
+      throw new Error(
+        `Your browser can't decode this video's codec (${codecs}). This is common on Linux with a distro-packaged ` +
+          "Chromium/Chrome build, which often ships without licensed codec support for H.264/HEVC/AAC. Try Google " +
+          'Chrome or Microsoft Edge (official builds, both include this codec support), or re-encode the video to ' +
+          'a royalty-free codec (e.g. VP9/AV1 video, Opus audio) before uploading.',
       )
     }
 
