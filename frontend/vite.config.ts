@@ -3,6 +3,12 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  optimizeDeps: {
+    // libde265 is an emscripten bundle that locates its own .wasm at runtime;
+    // Vite's dependency pre-bundler rewrites it in ways that break that, and
+    // the package's README asks for this exclusion by name.
+    exclude: ['@yume-chan/libde265'],
+  },
   plugins: [
     react(),
     VitePWA({
@@ -14,27 +20,11 @@ export default defineConfig({
       registerType: 'prompt',
       injectRegister: false,
       workbox: {
-        // ffmpeg.wasm's core is ~32MB and only ever loads on the
-        // software-decode fallback path (see lib/render/wasmTranscode.ts),
-        // which most users never hit. Precaching it would push a 32MB
-        // download onto every install for a feature they'll likely never
-        // use -- so it's excluded here and fetched on demand instead.
-        globIgnores: ['**/ffmpeg-core*.wasm'],
-        runtimeCaching: [
-          {
-            // Once a user *has* paid the download, keep it: this path is
-            // for people whose browser always needs it, so re-fetching
-            // 32MB per render would be a poor trade. CacheFirst is safe
-            // because the filename is content-hashed.
-            urlPattern: /ffmpeg-core.*\.wasm$/,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'ffmpeg-core-wasm',
-              expiration: { maxEntries: 2 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
-        ],
+        // The libde265 wasm (~420KB) precaches without needing the size cap
+        // raised, but .wasm has to be matched explicitly -- it isn't in
+        // workbox's default patterns, and an offline-capable PWA that can't
+        // decode HEVC offline would be missing the point.
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm}'],
       },
       manifest: {
         name: 'PitLane — Telemetry Overlay Studio',

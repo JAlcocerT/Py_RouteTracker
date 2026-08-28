@@ -4,19 +4,23 @@ import { DEFAULT_RENDER_CONFIG } from './renderConfig'
 
 // Mediabunny's Conversion talks to real codecs/WebCodecs, which don't exist
 // in this test environment -- mocked at the module boundary so this only
-// exercises renderVideo's own isValid/discardedTracks handling and its
-// software-decode fallback, not the codecs themselves.
+// exercises renderVideo's own isValid/discardedTracks handling and how it
+// engages the software HEVC decoder, not the codecs themselves.
 interface FakeConversion {
   isValid: boolean
   discardedTracks: { track: { type: string; number: number; codec: string }; reason: string }[]
   execute: () => Promise<void>
 }
 
-const primaryVideoTrack = { getDisplayWidth: vi.fn(async () => 640), getDisplayHeight: vi.fn(async () => 360) }
+const decoderConfig: VideoDecoderConfig = { codec: 'hvc1.1.6.L150.90', codedWidth: 3840, codedHeight: 2160 }
+const primaryVideoTrack = {
+  getDisplayWidth: vi.fn(async () => 640),
+  getDisplayHeight: vi.fn(async () => 360),
+  getDecoderConfig: vi.fn(async () => decoderConfig),
+}
 const executeMock = vi.fn(async () => undefined)
-/** One entry per expected Conversion.init call, so the fallback path can be
- * given a failing first pass and a succeeding second one. */
-let conversionQueue: FakeConversion[] = []
+const initMock = vi.fn()
+let conversionResult: FakeConversion
 
 vi.mock('mediabunny', () => ({
   ALL_FORMATS: [],
@@ -32,18 +36,21 @@ vi.mock('mediabunny', () => ({
     this.getPrimaryVideoTrack = async () => primaryVideoTrack
   }),
   Conversion: {
-    init: () => {
-      const next = conversionQueue.shift()
-      if (!next) throw new Error('Conversion.init called more times than the test queued results for')
-      return Promise.resolve(next)
+    init: (...args: unknown[]) => {
+      initMock(...args)
+      return Promise.resolve(conversionResult)
     },
   },
 }))
 
-// ffmpeg.wasm can't run under vitest ("does not support nodejs"), and this
-// suite is about *when* the fallback fires, not the transcode itself.
-const transcodeMock = vi.fn(async () => new File([], 'compat.webm', { type: 'video/webm' }))
-vi.mock('./wasmTranscode', () => ({ transcodeForCompatibility: (...args: unknown[]) => transcodeMock(...(args as [])) }))
+// The real module loads a ~2.3MB wasm build of libavcodec, which has no place
+// in a unit test. What matters here is only *whether* renderVideo consults it
+// and what it does with the answer -- hevcDecoder.test.ts covers the gating
+// decision itself.
+const ensureSoftwareHevcDecoderMock = vi.fn(async (_config: VideoDecoderConfig | null) => false)
+vi.mock('./hevcDecoder', () => ({
+  ensureSoftwareHevcDecoder: (config: VideoDecoderConfig | null) => ensureSoftwareHevcDecoderMock(config),
+}))
 
 class FakeOffscreenCanvas {
   width: number
@@ -70,8 +77,10 @@ const valid = (): FakeConversion => ({ isValid: true, discardedTracks: [], execu
 
 beforeEach(() => {
   executeMock.mockClear()
-  transcodeMock.mockClear()
-  conversionQueue = []
+  initMock.mockClear()
+  ensureSoftwareHevcDecoderMock.mockClear()
+  ensureSoftwareHevcDecoderMock.mockImplementation(async () => false)
+  conversionResult = valid()
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
   // Present by default (WebCodecs itself works) -- the test that needs the
   // API genuinely missing overrides this for itself.
@@ -80,65 +89,67 @@ beforeEach(() => {
 })
 
 describe('renderVideo', () => {
-  it('reports a non-codec discard without attempting a software transcode', async () => {
-    // Re-encoding the input can't create room in the output container, so
-    // spending minutes of CPU to reach the same failure would be worse than
-    // failing now.
-    conversionQueue = [invalidWith([{ track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'max_track_count_of_type_reached' }])]
-
-    await expect(renderVideo({} as File, baseOptions)).rejects.toThrow(/video track #1 \(codec: hevc\): max_track_count_of_type_reached/)
-    expect(transcodeMock).not.toHaveBeenCalled()
-    expect(executeMock).not.toHaveBeenCalled()
-  })
-
-  it('falls back to a software transcode when the browser cannot decode the source codecs', async () => {
-    // The real report this fallback exists for: hevc video and aac audio
-    // both discarded as undecodable, on a browser whose WebCodecs API is
-    // present and working -- so the codecs, not the API, are what's missing.
-    conversionQueue = [
-      invalidWith([
-        { track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'undecodable_source_codec' },
-        { track: { type: 'audio', number: 1, codec: 'aac' }, reason: 'undecodable_source_codec' },
-      ]),
-      valid(),
-    ]
-
-    const result = await renderVideo({} as File, { ...baseOptions, trimStart: 5, trimEnd: 9, annotatedRows: [{ ...row, time: 6 }] })
-
-    expect(transcodeMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ trimStart: 5, trimEnd: 9 }))
-    expect(executeMock).toHaveBeenCalledTimes(1)
-    expect(result).toBeInstanceOf(Blob)
-  })
-
-  it('surfaces the original error rather than looping when the transcoded file is still undecodable', async () => {
-    conversionQueue = [
-      invalidWith([{ track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'undecodable_source_codec' }]),
-      invalidWith([{ track: { type: 'video', number: 1, codec: 'vp8' }, reason: 'undecodable_source_codec' }]),
-    ]
-
-    await expect(renderVideo({} as File, baseOptions)).rejects.toThrow(/codec: vp8/)
-    // Exactly one attempt -- the retry must not itself retry.
-    expect(transcodeMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('blames missing WebCodecs support instead of transcoding, when the API itself is unavailable', async () => {
-    // Transcoding produces VP8, which pass two would still decode through
-    // WebCodecs -- with no API at all there is nothing to fall back to.
-    vi.stubGlobal('VideoDecoder', undefined)
-    vi.stubGlobal('AudioDecoder', undefined)
-    conversionQueue = [invalidWith([{ track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'undecodable_source_codec' }])]
-
-    await expect(renderVideo({} as File, baseOptions)).rejects.toThrow(/WebCodecs APIs this app needs/)
-    expect(transcodeMock).not.toHaveBeenCalled()
-  })
-
   it('proceeds to execute when the conversion is valid', async () => {
-    conversionQueue = [valid()]
-
     const result = await renderVideo({} as File, baseOptions)
 
     expect(executeMock).toHaveBeenCalledTimes(1)
-    expect(transcodeMock).not.toHaveBeenCalled()
     expect(result).toBeInstanceOf(Blob)
+  })
+
+  it('offers the software HEVC decoder the real track config, not a guessed one', async () => {
+    // HEVC support is routinely partial -- a decoder that takes 8-bit Main at
+    // 1080p may still refuse Main10 or 4K -- so probing with anything other
+    // than the file's own config would answer the wrong question.
+    await renderVideo({} as File, baseOptions)
+
+    expect(ensureSoftwareHevcDecoderMock).toHaveBeenCalledWith(decoderConfig)
+  })
+
+  it('reports the software-decoding stage only when that decoder is actually engaged', async () => {
+    const onStage = vi.fn()
+    await renderVideo({} as File, { ...baseOptions, onStage })
+    expect(onStage).not.toHaveBeenCalled()
+
+    ensureSoftwareHevcDecoderMock.mockImplementation(async () => true)
+    await renderVideo({} as File, { ...baseOptions, onStage })
+    expect(onStage).toHaveBeenCalledWith('software-decoding')
+  })
+
+  it('renders in a single pass -- no transcode-and-retry', async () => {
+    // The software decoder slots into Conversion's own decode step, so unlike
+    // the whole-file transcode this replaced, the source is never converted to
+    // an intermediate and re-read.
+    ensureSoftwareHevcDecoderMock.mockImplementation(async () => true)
+
+    await renderVideo({} as File, baseOptions)
+
+    expect(initMock).toHaveBeenCalledTimes(1)
+    expect(executeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces the per-track discard reasons when the conversion is invalid', async () => {
+    conversionResult = invalidWith([{ track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'max_track_count_of_type_reached' }])
+
+    await expect(renderVideo({} as File, baseOptions)).rejects.toThrow(/video track #1 \(codec: hevc\): max_track_count_of_type_reached/)
+    expect(executeMock).not.toHaveBeenCalled()
+  })
+
+  it('blames missing WebCodecs support when the API itself is unavailable', async () => {
+    // The software decoder can't stand in here: it replaces only the decode
+    // step, and encoding still needs WebCodecs.
+    vi.stubGlobal('VideoDecoder', undefined)
+    vi.stubGlobal('AudioDecoder', undefined)
+    conversionResult = invalidWith([{ track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'undecodable_source_codec' }])
+
+    await expect(renderVideo({} as File, baseOptions)).rejects.toThrow(/WebCodecs APIs this app needs/)
+  })
+
+  it('names the insecure connection when that is why WebCodecs is missing', async () => {
+    vi.stubGlobal('VideoDecoder', undefined)
+    vi.stubGlobal('AudioDecoder', undefined)
+    vi.stubGlobal('self', { isSecureContext: false })
+    conversionResult = invalidWith([{ track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'undecodable_source_codec' }])
+
+    await expect(renderVideo({} as File, baseOptions)).rejects.toThrow(/insecure connection/)
   })
 })

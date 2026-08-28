@@ -28,6 +28,11 @@ export function isInsecureContext(): boolean {
  * comes back false for all of them together even though the API itself
  * works. Probing directly, rather than guessing from class presence, is
  * what actually predicts whether rendering GoPro-style footage will work.
+ *
+ * Note these are *generic* probes, used only for up-front messaging. The
+ * render path probes the real track config instead (see
+ * lib/render/hevcDecoder.ts), because HEVC support is often partial -- a
+ * decoder that takes 8-bit Main at 1080p may still refuse Main10 or 4K.
  */
 export async function checkActionCamCodecSupport(): Promise<{ h264: boolean; hevc: boolean; aac: boolean }> {
   if (!hasWebCodecsSupport()) return { h264: false, hevc: false, aac: false }
@@ -45,9 +50,9 @@ export type OutputContainer = 'mp4' | 'webm'
  * without complaint -- but it needs H.264/HEVC, which a browser lacking the
  * licensed codecs can't produce. Those same builds always ship VP8/VP9 and
  * Opus (royalty-free, so no licensing to omit), which is precisely what
- * WebM carries. Probing here rather than assuming means the software-decode
- * fallback doesn't get all the way through a slow transcode only to fail at
- * the final encode.
+ * WebM carries. Probing here rather than assuming means a render doesn't get
+ * all the way through a slow software decode only to fail at the final
+ * encode.
  *
  * Called before the save-file picker opens so the suggested filename
  * matches what actually gets written.
@@ -74,21 +79,19 @@ export async function describeCodecCompatIssue(): Promise<string | null> {
       : "This browser doesn't support the video decoding/encoding APIs this app needs -- rendering will fail at the last step. Try a recent Chrome, Edge, or other Chromium-based browser."
   }
 
-  const { h264, hevc, aac } = await checkActionCamCodecSupport()
+  const { h264, aac } = await checkActionCamCodecSupport()
 
-  if (!h264 && !hevc) {
+  // HEVC deliberately isn't checked here any more: when the browser can't
+  // decode it, lib/render/hevcDecoder.ts supplies a WASM decoder and the
+  // render succeeds regardless -- just more slowly, which RenderProgress
+  // explains at the point it actually matters. Warning about it up front
+  // would be telling the user about a problem the app already solves.
+  if (!h264) {
     return (
-      "This browser can't decode H.264 or HEVC video -- the formats action cams almost always record in -- so " +
-      'rendering will fail at the last step. This is common on Linux with a distro-packaged Chromium/Chrome build, ' +
-      'which often ships without that licensed codec support built in; try Google Chrome or Microsoft Edge ' +
-      '(official builds) instead.'
-    )
-  }
-  if (!hevc) {
-    return (
-      'This browser can decode H.264 but not HEVC (H.265) video. If your camera recorded in HEVC -- common on ' +
-      'newer GoPros at higher resolutions/frame rates -- rendering will fail at the last step. Switch your camera ' +
-      'to H.264 recording mode, or try Google Chrome or Microsoft Edge (official builds) instead.'
+      "This browser can't decode H.264 video, which action cams commonly record in, so rendering H.264 footage " +
+      'will fail at the last step. This is common on Linux with a distro-packaged Chromium/Chrome build, which ' +
+      'often ships without that licensed codec support built in; try Google Chrome or Microsoft Edge (official ' +
+      'builds) instead. HEVC footage will still render, in software.'
     )
   }
   if (!aac) {

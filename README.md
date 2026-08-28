@@ -81,12 +81,22 @@ warn you on the upload screen if either applies:
 - **WebCodecs itself isn't available.** It's only exposed in a *secure context* (HTTPS, or
   the special-cased `localhost`/`127.0.0.1`) — a plain `http://` origin, like the Tailscale
   URL above, isn't one. Serve HTTPS instead (see the Tailscale section's warning).
-- **WebCodecs is available, but this browser build can't decode H.264/HEVC/AAC.** These are
-  all patent-licensed codecs, and action cams (GoPro included) almost always record in them.
+- **WebCodecs is available, but this browser build can't decode H.264/AAC.** These are
+  patent-licensed codecs, and action cams (GoPro included) almost always record in them.
   Many Linux distro-packaged Chromium/Chrome builds implement WebCodecs correctly but ship
   without licensed codec support at all — this looks identical to a real codec problem, but
   it's actually a browser build gap. Use the official Google Chrome or Microsoft Edge build
   instead (both bundle this codec support).
+
+**HEVC (H.265) footage needs no special handling.** Chrome and Edge only expose HEVC when
+the machine has a hardware decoder for it (VideoToolbox on macOS, the HEVC Video Extensions
+on Windows, VAAPI on Linux), so plenty of otherwise-fine setups — a Linux desktop with an
+NVIDIA or AMD GPU, a VM, a stock Windows install — can't decode the format newer GoPros
+record in by default. Where the browser can't, the app decodes HEVC itself in software
+using a WebAssembly build of [libde265](https://github.com/strukturag/libde265), and the
+render proceeds normally. It's slower than hardware decoding (roughly 45fps at 1080p and
+14fps at 4K, per CPU core), so long 4K clips take a while, and the render screen says so
+while it's happening. Hardware decoding is always preferred when the browser has it.
 
 ## Storage & privacy
 
@@ -167,4 +177,10 @@ go to the package's settings on GitHub and change its visibility to public if yo
 [mp4box.js](https://github.com/gpac/mp4box.js) ·
 [gpmf-extract](https://github.com/JuanIrache/gpmf-extract) ·
 [gopro-telemetry](https://github.com/JuanIrache/gopro-telemetry) ·
+[libde265](https://github.com/strukturag/libde265) ·
 [WebCodecs](https://developer.mozilla.org/en-US/docs/Web/API/WebCodecs_API)
+
+libde265 is used via [`@yume-chan/libde265`](https://github.com/yume-chan/libde265), a
+WebAssembly build of it, and is licensed under the LGPL-3.0 — compatible with this
+project's AGPL-3.0. It ships as a separate `.wasm` module, fetched at runtime only when a
+browser can't decode HEVC on its own.

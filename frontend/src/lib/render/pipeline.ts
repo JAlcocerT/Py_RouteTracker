@@ -11,6 +11,12 @@
  * [trimStart, trimEnd] at all -- an improvement over the server pipeline,
  * which always fully re-encoded the trim range as a distinct step first.
  *
+ * Decoding normally runs on the browser's own (hardware) decoders via
+ * WebCodecs. HEVC is the exception -- most browser builds can't decode it at
+ * all -- so hevcDecoder.ts registers a WASM decoder with mediabunny for those
+ * files. That swap is invisible here: it replaces one step inside
+ * `Conversion` and leaves trim, the HUD draw, muxing, and the encode alone.
+ *
  * Not validated end-to-end in a real browser against real footage (see this
  * repo's other render-pipeline modules for the same caveat) -- in
  * particular, `VideoSample.timestamp`'s exact meaning inside `Conversion`'s
@@ -23,9 +29,9 @@ import type { OutputContainer } from '../env'
 import type { DiscardedTrack } from 'mediabunny'
 import { hasWebCodecsSupport, isInsecureContext } from '../env'
 import type { AnnotatedRow } from '../laps/detection'
+import { ensureSoftwareHevcDecoder } from './hevcDecoder'
 import { HudRenderer } from './hudRenderer'
 import type { RenderConfig } from './renderConfig'
-import { transcodeForCompatibility } from './wasmTranscode'
 
 interface DiscardedTrackDiagnostic {
   type: string
@@ -80,32 +86,23 @@ export interface RenderVideoOptions {
    * already correct relative to the full session and are not recomputed. */
   annotatedRows: AnnotatedRow[]
   onProgress?: (fraction: number) => void
-  /** Names the phase the render is currently in, so the UI can say
-   * "Converting…" during the (much slower) software-decode fallback rather
-   * than leaving a progress bar to crawl with no explanation. */
+  /** Reports whether this render is using the software HEVC decoder, so the
+   * UI can explain why a render is slow rather than leaving a progress bar to
+   * crawl with no explanation. */
   onStage?: (stage: RenderStage) => void
   /** When given, output is streamed directly to this sink (e.g. a
    * FileSystemWritableFileStream from window.showSaveFilePicker) instead of
    * being buffered entirely in memory. */
   outputStream?: WritableStream
-  /** Internal: cleared when re-entering after a software transcode, so a
-   * still-undecodable file reports the real error instead of looping. */
-  allowWasmFallback?: boolean
   /** Chosen by the caller via `pickOutputContainer` before the save-file
    * picker opens, so the suggested filename matches what's written. */
   outputContainer?: OutputContainer
 }
 
-export type RenderStage = 'rendering' | 'transcoding'
-
-/** How much of the overall progress bar the software transcode owns when it
- * runs. It's by far the slower of the two phases, so it gets the larger
- * share -- the split only has to be monotonic and roughly proportionate,
- * since the two phases have no comparable unit of work. */
-const TRANSCODE_PROGRESS_SHARE = 0.7
+export type RenderStage = 'rendering' | 'software-decoding'
 
 export async function renderVideo(videoFile: File, options: RenderVideoOptions): Promise<Blob | null> {
-  const { trimStart, trimEnd, config, annotatedRows, onProgress, onStage, outputStream, allowWasmFallback = true, outputContainer = 'mp4' } = options
+  const { trimStart, trimEnd, config, annotatedRows, onProgress, onStage, outputStream, outputContainer = 'mp4' } = options
   const windowedRows = annotatedRows.filter((r) => r.time >= trimStart && r.time <= trimEnd)
   if (windowedRows.length === 0) throw new Error('No telemetry samples in the selected trim range')
 
@@ -119,6 +116,14 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
   const width = await videoTrack.getDisplayWidth()
   const height = await videoTrack.getDisplayHeight()
   const hud = new HudRenderer(windowedRows, { ...config, widthPx: width, heightPx: height })
+
+  // Registers the WASM HEVC decoder with mediabunny if -- and only if -- this
+  // browser can't decode this particular file natively. Everything below is
+  // unaffected either way: `Conversion` picks the registered decoder up on its
+  // own, and the encode still runs on the browser's own encoder. See
+  // hevcDecoder.ts for why so much footage needs this.
+  const usingSoftwareDecode = await ensureSoftwareHevcDecoder(await videoTrack.getDecoderConfig())
+  if (usingSoftwareDecode) onStage?.('software-decoding')
 
   const canvas = new OffscreenCanvas(width, height)
   const ctx = canvas.getContext('2d')
@@ -170,44 +175,15 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
       // The whole API is missing, not just support for this file's codecs --
       // every track gets discarded as 'undecodable_source_codec' regardless
       // of what codec it actually is, which reads exactly like a codec
-      // problem below. Name the real cause instead. Checked ahead of the
-      // software-decode fallback below: that fallback re-encodes to VP8,
-      // which pass two still decodes through WebCodecs -- so with the API
-      // absent entirely there is nothing for it to fall back *to*, and
-      // transcoding would just burn minutes to reach this same error.
+      // problem below. Name the real cause instead. Note the software HEVC
+      // decoder can't stand in here: it only replaces the *decode* step, and
+      // encoding still needs WebCodecs, so with the API absent entirely there
+      // is nothing to fall back to.
       throw new Error(
         isInsecureContext()
           ? "This page can't decode or encode video because it's loaded over an insecure connection -- WebCodecs (which rendering depends on) is only available over HTTPS or from localhost. Open this app via HTTPS, or over localhost/127.0.0.1, instead."
           : "This browser doesn't support the WebCodecs APIs this app needs to decode and encode video. Try a recent Chrome, Edge, or other Chromium-based browser.",
       )
-    }
-
-    // Nothing about this browser's own decoders is going to change, so
-    // rather than reporting a dead end, decode the footage ourselves.
-    // Deliberately gated on `undecodable_source_codec`: a track discarded
-    // for any other reason (no encodable target, track limits) wouldn't be
-    // helped by re-encoding the input, and burning minutes of the user's
-    // CPU to arrive at the same failure would be worse than failing now.
-    const undecodable = diagnostics.filter((d) => d.reason === 'undecodable_source_codec')
-    if (undecodable.length > 0 && allowWasmFallback) {
-      onStage?.('transcoding')
-      const compatible = await transcodeForCompatibility(videoFile, {
-        trimStart,
-        trimEnd,
-        onProgress: (f) => onProgress?.(f * TRANSCODE_PROGRESS_SHARE),
-      })
-      onStage?.('rendering')
-      return renderVideo(compatible, {
-        ...options,
-        // The transcode already applied the trim and rebased the result to
-        // zero, so the second pass must not trim again -- and the telemetry
-        // has to shift by the same amount to stay aligned with the footage.
-        trimStart: 0,
-        trimEnd: trimEnd - trimStart,
-        annotatedRows: annotatedRows.map((r) => ({ ...r, time: r.time - trimStart })),
-        onProgress: (f) => onProgress?.(TRANSCODE_PROGRESS_SHARE + f * (1 - TRANSCODE_PROGRESS_SHARE)),
-        allowWasmFallback: false,
-      })
     }
 
     const detail = diagnostics.map((d) => `${d.type} track #${d.number} (codec: ${d.codec}): ${d.reason} [${d.configSummary}]`).join('; ')

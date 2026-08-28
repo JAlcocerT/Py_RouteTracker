@@ -52,14 +52,37 @@ describe('describeCodecCompatIssue', () => {
     await expect(describeCodecCompatIssue()).resolves.toMatch(/insecure connection/)
   })
 
-  it('flags a real GoPro-style codec gap (hevc/aac undecodable) even though WebCodecs itself works', async () => {
+  it('stays quiet about an HEVC-only gap, which the software decoder handles', async () => {
+    // Warning here would be telling the user about a problem the app already
+    // solves -- lib/render/hevcDecoder.ts supplies a WASM decoder and the
+    // render succeeds, just more slowly.
     vi.stubGlobal('self', { isSecureContext: true })
     vi.stubGlobal('VideoDecoder', class {})
     vi.stubGlobal('AudioDecoder', class {})
     canDecodeVideo.mockImplementation(async (codec: string) => codec === 'avc')
+    canDecodeAudio.mockImplementation(async () => true)
+
+    await expect(describeCodecCompatIssue()).resolves.toBeNull()
+  })
+
+  it('still flags an AAC gap, which nothing in the render path stands in for', async () => {
+    vi.stubGlobal('self', { isSecureContext: true })
+    vi.stubGlobal('VideoDecoder', class {})
+    vi.stubGlobal('AudioDecoder', class {})
+    canDecodeVideo.mockResolvedValue(true)
     canDecodeAudio.mockImplementation(async () => false)
 
-    await expect(describeCodecCompatIssue()).resolves.toMatch(/HEVC \(H\.265\)/)
+    await expect(describeCodecCompatIssue()).resolves.toMatch(/can't decode AAC audio/)
+  })
+
+  it('flags an H.264 gap, since the software decoder only covers HEVC', async () => {
+    vi.stubGlobal('self', { isSecureContext: true })
+    vi.stubGlobal('VideoDecoder', class {})
+    vi.stubGlobal('AudioDecoder', class {})
+    canDecodeVideo.mockImplementation(async (codec: string) => codec !== 'avc')
+    canDecodeAudio.mockResolvedValue(true)
+
+    await expect(describeCodecCompatIssue()).resolves.toMatch(/can't decode H\.264 video/)
   })
 
   it('is null when h264/hevc/aac all decode fine', async () => {
