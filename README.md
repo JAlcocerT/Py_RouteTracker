@@ -42,23 +42,68 @@ publishes a ready-to-run multi-arch image (see [CI/CD](#cicd) below) — pull it
 docker run -d --name routetracker -p 7000:7000 ghcr.io/jlleongarcia/py_routetracker:latest
 ```
 
-### Accessing it from other devices over Tailscale
+### Accessing it from other devices
 
 The container publishes port 7000 on all of the host's network interfaces (not just
-`127.0.0.1`), so once it's running you can also reach it from any other device on your
-Tailscale network at `http://<this-machine's-tailscale-ip-or-MagicDNS-name>:7000` — no
-extra Docker network configuration needed. If it's not reachable, check that your host's
-firewall (e.g. `ufw`) allows inbound connections on port 7000 from the `tailscale0`
-interface.
+`127.0.0.1`), so it's reachable from other machines on your LAN or Tailscale network
+straight away — no extra Docker network configuration needed. If it isn't, check that the
+host firewall (e.g. `ufw`) allows inbound connections on port 7000.
 
-> [!WARNING]
-> Rendering depends on WebCodecs, which browsers only expose in a *secure context*
-> (HTTPS, or the special-cased `localhost`/`127.0.0.1`). Plain `http://` access over
-> Tailscale — including the MagicDNS URL above — is **not** a secure context, so
-> rendering will fail there even though upload, trimming, and telemetry extraction work
-> fine. Serve HTTPS instead, e.g. via [`tailscale serve`](https://tailscale.com/kb/1242/tailscale-serve)
-> pointed at this container's port 7000 (gives you a `https://<magicdns-name>.<tailnet>.ts.net`
-> URL with a real, trusted cert) or your own reverse proxy in front of the container.
+> [!IMPORTANT]
+> **Reaching it over plain `http://` at an IP or hostname will break rendering.** You'll
+> get: *"This page can't decode or encode video because it's loaded over an insecure
+> connection."*
+>
+> This isn't something the app can work around. Rendering needs
+> [WebCodecs](https://developer.mozilla.org/en-US/docs/Web/API/WebCodecs_API), and browsers
+> only expose it in a **secure context** — HTTPS, or the specially-allowed `localhost` /
+> `127.0.0.1`. A private LAN or Tailscale IP over `http://` is *not* a secure context: the
+> browser doesn't care that the address is unroutable from the internet, only that the
+> origin isn't authenticated. Upload, trimming and telemetry extraction still work; only
+> rendering fails. Installing it as a PWA won't work either, for the same reason.
+>
+> On the host itself, `http://localhost:7000` works with no setup at all. For anything
+> else, serve it over HTTPS — two easy routes below.
+
+#### Option A: `tailscale serve` (private, recommended)
+
+Keeps the app reachable only by your own devices, and issues a real, trusted certificate
+automatically. First enable **HTTPS Certificates** for your tailnet (admin console → DNS),
+then on the host:
+
+```sh
+sudo tailscale serve --bg --https=8443 7000
+```
+
+That publishes it at `https://<machine>.<your-tailnet>.ts.net:8443/`. Undo with
+`sudo tailscale serve --https=8443 off`.
+
+Use a **port** (`--https=8443`) rather than a sub-path (`--set-path`): the app's assets are
+served from absolute paths and its PWA manifest declares `scope: "/"`, so mounting it under
+a sub-path breaks asset resolution and the service worker's scope. If port 443 isn't already
+taken by another `serve` mapping, plain `--bg 7000` works too and drops the `:8443`.
+
+This is `serve`, not `funnel` — nothing is published to the public internet.
+
+#### Option B: Cloudflare Tunnel (reachable anywhere)
+
+Also gives a valid certificate and a working secure context, and unlike Tailscale it works
+from devices outside your network. The trade-off is that it *is* internet-facing, so put
+[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) in
+front of it unless you genuinely want it open. For a throwaway test,
+`cloudflared tunnel --url http://localhost:7000` prints an ephemeral HTTPS URL needing no
+domain.
+
+Two settings will otherwise bite you:
+
+- **Turn Rocket Loader off.** It rewrites and defers scripts, which breaks the ES module
+  worker the renderer runs in.
+- **Bypass cache for `/sw.js`.** Cloudflare caches `.js` by extension, and a cached service
+  worker will pin visitors to a stale build indefinitely.
+
+Your footage is unaffected either way: every feature runs client-side, so whichever route
+you pick only ever serves the app's own JS/CSS/HTML/wasm. No video or GPX data is uploaded
+(see [Storage & privacy](#storage--privacy)).
 
 ### Install it as an app
 
@@ -79,8 +124,9 @@ don't need this and will always work. Two distinct things can break it, and the 
 warn you on the upload screen if either applies:
 
 - **WebCodecs itself isn't available.** It's only exposed in a *secure context* (HTTPS, or
-  the special-cased `localhost`/`127.0.0.1`) — a plain `http://` origin, like the Tailscale
-  URL above, isn't one. Serve HTTPS instead (see the Tailscale section's warning).
+  the special-cased `localhost`/`127.0.0.1`) — a plain `http://` origin at a LAN or
+  Tailscale address isn't one. See
+  [Accessing it from other devices](#accessing-it-from-other-devices) for the two-minute fix.
 - **WebCodecs is available, but this browser build can't decode H.264/AAC.** These are
   patent-licensed codecs, and action cams (GoPro included) almost always record in them.
   Many Linux distro-packaged Chromium/Chrome builds implement WebCodecs correctly but ship
