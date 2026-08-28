@@ -52,6 +52,16 @@ vi.mock('./hevcDecoder', () => ({
   ensureSoftwareHevcDecoder: (config: VideoDecoderConfig | null) => ensureSoftwareHevcDecoderMock(config),
 }))
 
+/** Records what the HUD is asked to draw, and with which options. */
+const hudDraws: { time: number; clear: boolean | undefined }[] = []
+vi.mock('./hudRenderer', () => ({
+  HudRenderer: class {
+    drawFrameAtTime(_ctx: unknown, time: number, options?: { clear?: boolean }) {
+      hudDraws.push({ time, clear: options?.clear })
+    }
+  },
+}))
+
 class FakeOffscreenCanvas {
   width: number
   height: number
@@ -76,6 +86,7 @@ const invalidWith = (discardedTracks: FakeConversion['discardedTracks']): FakeCo
 const valid = (): FakeConversion => ({ isValid: true, discardedTracks: [], execute: executeMock })
 
 beforeEach(() => {
+  hudDraws.length = 0
   executeMock.mockClear()
   initMock.mockClear()
   ensureSoftwareHevcDecoderMock.mockClear()
@@ -151,5 +162,56 @@ describe('renderVideo', () => {
     conversionResult = invalidWith([{ track: { type: 'video', number: 1, codec: 'hevc' }, reason: 'undecodable_source_codec' }])
 
     await expect(renderVideo({} as File, baseOptions)).rejects.toThrow(/insecure connection/)
+  })
+})
+
+describe('renderVideo frame compositing', () => {
+  /** Pulls the `process` callback out of the Conversion.init options and runs
+   * it against a stand-in sample, which is the only way to observe what the
+   * HUD is actually asked to draw per frame. */
+  async function runProcess(options: { trimStart: number; trimEnd: number }, sampleTimestamp: number) {
+    const drawn: unknown[] = []
+    await renderVideo({} as File, { ...baseOptions, ...options, annotatedRows: [{ ...row, time: options.trimStart }] })
+    const initOptions = initMock.mock.calls[0][0] as { video: { process: (s: unknown) => unknown } }
+    const sample = {
+      timestamp: sampleTimestamp,
+      draw: (...args: unknown[]) => drawn.push(args),
+    }
+    const result = initOptions.video.process(sample)
+    return { drawn, result }
+  }
+
+  it('draws the video frame before the HUD, into the same canvas', async () => {
+    const { drawn, result } = await runProcess({ trimStart: 0, trimEnd: 10 }, 1)
+
+    expect(drawn).toHaveLength(1)
+    expect(hudDraws).toHaveLength(1)
+    expect(result).toBeInstanceOf(FakeOffscreenCanvas)
+  })
+
+  it('tells the HUD not to clear the canvas', async () => {
+    // HudRenderer wipes the canvas by default, which erased the video frame
+    // that had just been drawn -- the render came out as a black picture with
+    // only the HUD on it.
+    await runProcess({ trimStart: 0, trimEnd: 10 }, 1)
+
+    expect(hudDraws[0].clear).toBe(false)
+  })
+
+  it('asks the HUD for absolute time, not the trim-rebased timestamp', async () => {
+    // Conversion rebases sample timestamps to the trim window before calling
+    // `process`, but the telemetry rows keep their original absolute times.
+    // Passing the rebased value straight through asked for telemetry from
+    // before the window began, and the nearest-row search clamps -- so the
+    // HUD froze on row 0 for the entire video.
+    await runProcess({ trimStart: 120, trimEnd: 180 }, 5)
+
+    expect(hudDraws[0].time).toBe(125)
+  })
+
+  it('keeps HUD and footage aligned when the trim starts at zero', async () => {
+    await runProcess({ trimStart: 0, trimEnd: 60 }, 12.5)
+
+    expect(hudDraws[0].time).toBe(12.5)
   })
 })

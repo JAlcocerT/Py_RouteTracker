@@ -17,12 +17,12 @@
  * files. That swap is invisible here: it replaces one step inside
  * `Conversion` and leaves trim, the HUD draw, muxing, and the encode alone.
  *
- * Not validated end-to-end in a real browser against real footage (see this
- * repo's other render-pipeline modules for the same caveat) -- in
- * particular, `VideoSample.timestamp`'s exact meaning inside `Conversion`'s
- * `process` callback (absolute to the untrimmed input vs. rebased to the
- * trim window) is assumed, not confirmed, to be the former; getting this
- * wrong would misalign the HUD against the footage without erroring.
+ * `VideoSample.timestamp` inside `Conversion`'s `process` callback is
+ * **rebased to the trim window**, not absolute to the input -- Conversion
+ * calls `setTimestamp(timestamp - trim.start)` on each sample before handing
+ * it over. This was previously assumed to be the other way round, which
+ * silently froze the HUD on its first telemetry row for the whole render.
+ * See the `process` callback below.
  */
 import { ALL_FORMATS, BlobSource, BufferTarget, Conversion, Input, Mp4OutputFormat, Output, StreamTarget, WebMOutputFormat } from 'mediabunny'
 import type { OutputContainer } from '../env'
@@ -147,7 +147,21 @@ export async function renderVideo(videoFile: File, options: RenderVideoOptions):
     video: {
       process: (sample) => {
         sample.draw(ctx, 0, 0, width, height)
-        hud.drawFrameAtTime(ctx, sample.timestamp)
+        // Two things here are easy to get wrong, and both were:
+        //
+        // `clear: false`, because HudRenderer wipes the canvas by default --
+        // it was written to own a transparent HUD-only surface. Letting it
+        // clear here erases the frame just drawn, leaving a black video with
+        // nothing but the HUD on it.
+        //
+        // `trimStart + sample.timestamp`, because Conversion rebases sample
+        // timestamps to the trim window before calling this (it does
+        // `setTimestamp(timestamp - trim.start)`), whereas `windowedRows`
+        // keeps the telemetry's original absolute times. Passing the rebased
+        // value asks for telemetry from before the window starts, and
+        // HudRenderer's nearest-row search clamps -- so every frame gets row
+        // 0 and the HUD sits frozen for the whole render.
+        hud.drawFrameAtTime(ctx, trimStart + sample.timestamp, { clear: false })
         return canvas
       },
     },

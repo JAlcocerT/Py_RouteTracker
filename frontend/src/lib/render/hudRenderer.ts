@@ -142,6 +142,16 @@ function outlinedStroke(ctx: CanvasRenderingContext2D | OffscreenCanvasRendering
   ctx.shadowBlur = 0
 }
 
+export interface DrawOptions {
+  /**
+   * Whether to wipe the canvas before drawing. True (the default) suits a
+   * dedicated, transparent HUD canvas. Pass false when drawing on top of
+   * already-rendered video, which is what the render pipeline does -- there,
+   * clearing would erase the frame the HUD is supposed to annotate.
+   */
+  clear?: boolean
+}
+
 export class HudRenderer {
   private rows: AnnotatedRow[]
   private config: RenderConfig
@@ -440,8 +450,8 @@ export class HudRenderer {
    * frame -- the natural entry point when driving this from a video
    * decoder's own per-frame timestamps, which land on a different, denser
    * or sparser grid than the telemetry's own resampled rate. */
-  drawFrameAtTime(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, timeSec: number): void {
-    this.drawFrame(ctx, this.nearestRowIndex(timeSec))
+  drawFrameAtTime(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, timeSec: number, options?: DrawOptions): void {
+    this.drawFrame(ctx, this.nearestRowIndex(timeSec), options)
   }
 
   private nearestRowIndex(timeSec: number): number {
@@ -458,9 +468,12 @@ export class HudRenderer {
     return lo
   }
 
-  drawFrame(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, frameIndex: number): void {
+  drawFrame(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, frameIndex: number, options?: DrawOptions): void {
     const { widthPx, heightPx } = this.config
-    ctx.clearRect(0, 0, widthPx, heightPx)
+    // Only when this renderer owns the whole canvas. Compositing onto real
+    // footage must pass `clear: false`: the video frame is drawn first, and
+    // wiping it here leaves nothing but the HUD floating on an empty canvas.
+    if (options?.clear ?? true) ctx.clearRect(0, 0, widthPx, heightPx)
     if (frameIndex >= this.rows.length) return
     const row = this.rows[frameIndex]
 
