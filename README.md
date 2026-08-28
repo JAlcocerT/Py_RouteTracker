@@ -144,6 +144,13 @@ render proceeds normally. It's slower than hardware decoding (roughly 45fps at 1
 14fps at 4K, per CPU core), so long 4K clips take a while, and the render screen says so
 while it's happening. Hardware decoding is always preferred when the browser has it.
 
+**Rendered output is always 8-bit SDR.** If your camera records 10-bit or HDR (HLG/PQ) —
+newer GoPros do at higher bitrates — the footage decodes fine, but the HUD is composited
+through a 2D canvas, which is 8-bit sRGB, so the render is tone-mapped down to 8-bit on the
+way out. The result is a normal, universally-playable file; it just won't carry HDR through.
+This is a property of the compositing step, not of any one decoder, so it applies whether
+the browser decoded the video or the software decoder did.
+
 ## Storage & privacy
 
 Nothing is stored server-side, because nothing is ever sent server-side. Your video, GPX
@@ -182,8 +189,10 @@ frontend/   React + Vite + TypeScript webapp; frontend/src/lib/ is where everyth
               lib/telemetry/   GoPro GPMF + GPX parsing, resampling
               lib/laps/        lap detection, lap-vs-lap comparison
               lib/mp4/         video probing + the client-side lossless join
-              lib/render/      the WebCodecs decode -> Canvas2D HUD draw -> encode -> mux
-                                pipeline, run in workers/renderWorker.ts
+              lib/render/      the decode -> Canvas2D HUD draw -> encode -> mux pipeline,
+                                run in workers/renderWorker.ts. Decoding uses WebCodecs;
+                                hevcDecoder.ts supplies a WASM HEVC decoder for the many
+                                browsers that can't decode it themselves
 ```
 
 See `backend/readme.md` for backend development/testing, and run `npm run dev` in
