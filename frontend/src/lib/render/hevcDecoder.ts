@@ -26,12 +26,12 @@
  *
  * Measured throughput of this build, decoding x265-encoded test footage:
  * ~45fps at 1080p 8-bit, ~38fps at 1080p 10-bit, ~14fps at 4K 8-bit. Output
- * was verified bit-exact against ffmpeg's own decoder. libde265's WASM build
- * is single-threaded, so those numbers are per core and don't improve with
- * cross-origin isolation.
+ * was verified bit-exact against ffmpeg's own decoder, at both 8- and 10-bit.
+ * libde265's WASM build is single-threaded, so those numbers are per core and
+ * don't improve with cross-origin isolation.
  */
 import { CustomVideoDecoder, VideoSample, registerDecoder } from 'mediabunny'
-import type { EncodedPacket, VideoSamplePixelFormat } from 'mediabunny'
+import type { EncodedPacket } from 'mediabunny'
 import initLibde265 from '@yume-chan/libde265'
 import type { Decoder, MainModule } from '@yume-chan/libde265'
 import { NAL_UNIT_TYPE_SPS, parseHevcSps } from './hevcSps'
@@ -202,6 +202,27 @@ function parseHvcC(description: AllowSharedBufferSource): { parameterSets: Uint8
   return { parameterSets, spsNals, nalLengthSize }
 }
 
+/**
+ * Returns a view covering a decoded plane in full.
+ *
+ * `getImagePlane().bytes` cannot be trusted to be long enough. The binding
+ * sizes it as `width * height * bitsPerPixel / 8`, which is right for 8-bit
+ * but not for high bit depth: libde265 stores 10-bit samples as uint16 with a
+ * two-bytes-per-sample stride, so a 1920x1080 10-bit plane really occupies
+ * `stride * height` = 4,147,200 bytes while the handed-out view covers only
+ * 2,592,000 -- about two thirds of the picture. Copying from it directly
+ * silently truncated every 10-bit frame.
+ *
+ * The plane itself is fully allocated, so re-deriving the view from the same
+ * heap buffer at the same offset reads the whole thing. Verified bit-exact
+ * against ffmpeg's own 10-bit decode of the same file.
+ */
+function fullPlaneView(plane: { bytes: Uint8Array; stride: number; height: number }): Uint8Array {
+  const needed = plane.stride * plane.height
+  if (plane.bytes.byteLength >= needed) return plane.bytes
+  return new Uint8Array(plane.bytes.buffer, plane.bytes.byteOffset, needed)
+}
+
 export class WasmHevcDecoder extends CustomVideoDecoder {
   /** Unconditionally true for HEVC: `ensureSoftwareHevcDecoder` above has
    * already established that the native decoder can't handle this file, and
@@ -221,6 +242,15 @@ export class WasmHevcDecoder extends CustomVideoDecoder {
   /** Decoded frames held back to restore presentation order, kept sorted by
    * timestamp so the one to emit next is always at the front. */
   private pending: VideoSample[] = []
+  /** Frame durations, keyed by the microsecond timestamp handed to libde265.
+   * libde265 passes timestamps through untouched but knows nothing about
+   * durations, so they're carried alongside and reunited with the frame on the
+   * way out. Without this every sample gets a zero duration -- see `decode`. */
+  private durations = new Map<number, number>()
+  /** Fallback for the (unexpected) case of a frame whose timestamp isn't in
+   * the map. Zero is never an acceptable answer, so the last real duration
+   * stands in. */
+  private lastDuration = 0
 
   async init(): Promise<void> {
     if (!this.config.description) {
@@ -259,7 +289,15 @@ export class WasmHevcDecoder extends CustomVideoDecoder {
     const decoder = this.decoder
     if (!decoder) throw new Error('HEVC decoder used before init()')
 
-    const pts = BigInt(Math.round(packet.timestamp * MICROSECONDS_PER_SECOND))
+    const ptsMicroseconds = Math.round(packet.timestamp * MICROSECONDS_PER_SECOND)
+    const pts = BigInt(ptsMicroseconds)
+    // Stashed rather than passed: libde265 carries a timestamp through the
+    // decode but has no notion of duration, so it has to be reunited with the
+    // frame in `toVideoSample`. Emitting zero-duration samples produced an
+    // output file whose whole video track collapsed to a single frame -- audio
+    // played, the picture never moved. mediabunny's own encoder path notes
+    // that a zero duration "glitches some codecs".
+    this.durations.set(ptsMicroseconds, packet.duration)
     const data = packet.data
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
 
@@ -294,6 +332,8 @@ export class WasmHevcDecoder extends CustomVideoDecoder {
     // before it can decode anything further.
     decoder.reset()
     this.primeParameterSets()
+    // Any timestamps still in here belong to frames that will never arrive.
+    this.durations.clear()
   }
 
   /**
@@ -361,33 +401,67 @@ export class WasmHevcDecoder extends CustomVideoDecoder {
     }
 
     const bitsPerSample = image.getBitsPerPixel(0)
-    const format: VideoSamplePixelFormat = bitsPerSample > 8 ? 'I420P10' : 'I420'
-    const width = image.getWidth(0)
-    const height = image.getHeight(0)
+    const planes = [0, 1, 2].map((channel) => {
+      const plane = image.getImagePlane(channel)
+      return { width: plane.width, height: plane.height, stride: plane.stride, bytes: fullPlaneView(plane) }
+    })
 
-    // libde265 hands back three separately-allocated planes, while VideoSample
-    // wants one buffer described by per-plane offsets -- so they're packed
-    // together here. The copy is needed regardless: these are views into the
-    // wasm heap and are invalidated by `image.delete()` below.
-    const planes = [0, 1, 2].map((channel) => image.getImagePlane(channel))
-    const layout = []
+    // Packed tightly (stride === width) into one 8-bit I420 buffer, which is
+    // both what `VideoSample` wants as a single allocation and what sidesteps
+    // libde265's per-plane stride padding entirely. The copy isn't avoidable
+    // anyway: these are views into the wasm heap, invalidated by
+    // `image.delete()` once this returns.
+    const layout: { offset: number; stride: number }[] = []
     let total = 0
     for (const plane of planes) {
-      layout.push({ offset: total, stride: plane.stride })
-      total += plane.stride * plane.height
+      layout.push({ offset: total, stride: plane.width })
+      total += plane.width * plane.height
     }
+
     const data = new Uint8Array(total)
-    for (const [i, plane] of planes.entries()) data.set(plane.bytes.subarray(0, plane.stride * plane.height), layout[i].offset)
+    for (const [i, plane] of planes.entries()) {
+      let out = layout[i].offset
+      if (bitsPerSample > 8) {
+        // 10- and 12-bit samples are stored as little-endian uint16. They're
+        // scaled down to 8 bits here rather than passed through as I420P10,
+        // because the HUD is composited onto an 8-bit canvas and the result is
+        // encoded as 8-bit either way -- so there is no depth to preserve past
+        // this point, and I420P10 is not a pixel format every browser will
+        // build a VideoFrame from.
+        const shift = bitsPerSample - 8
+        const view = new DataView(plane.bytes.buffer, plane.bytes.byteOffset, plane.bytes.byteLength)
+        for (let y = 0; y < plane.height; y++) {
+          const rowStart = y * plane.stride
+          for (let x = 0; x < plane.width; x++) data[out++] = view.getUint16(rowStart + x * 2, true) >> shift
+        }
+      } else if (plane.stride === plane.width) {
+        // Unpadded, so the whole plane is one contiguous copy.
+        data.set(plane.bytes.subarray(0, plane.width * plane.height), out)
+      } else {
+        for (let y = 0; y < plane.height; y++) {
+          data.set(plane.bytes.subarray(y * plane.stride, y * plane.stride + plane.width), out)
+          out += plane.width
+        }
+      }
+    }
+
+    const timestampMicroseconds = Number(image.pts)
+    const duration = this.durations.get(timestampMicroseconds)
+    if (duration !== undefined) {
+      this.durations.delete(timestampMicroseconds)
+      this.lastDuration = duration
+    }
 
     return new VideoSample(data, {
-      format,
-      codedWidth: width,
-      codedHeight: height,
+      format: 'I420',
+      codedWidth: planes[0].width,
+      codedHeight: planes[0].height,
       // No `visibleRect`: libde265 has already applied the conformance window,
       // so a stream coded as 1088 tall to fill whole CTUs is handed back at
       // its real 1080. Verified against ffmpeg, which produces the same
       // cropped frame byte for byte.
-      timestamp: Number(image.pts) / MICROSECONDS_PER_SECOND,
+      timestamp: timestampMicroseconds / MICROSECONDS_PER_SECOND,
+      duration: duration ?? this.lastDuration,
       layout,
       colorSpace: {
         fullRange: image.isFullRange,
@@ -403,6 +477,7 @@ export class WasmHevcDecoder extends CustomVideoDecoder {
     // decoder's own state is released.
     for (const sample of this.pending) sample.close()
     this.pending = []
+    this.durations.clear()
     this.decoder?.delete()
     this.decoder = null
   }
