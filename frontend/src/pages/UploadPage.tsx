@@ -4,7 +4,7 @@ import { MultiDropzone } from '../components/MultiDropzone'
 import { PartsList } from '../components/PartsList'
 import { describeCodecCompatIssue } from '../lib/env'
 import { probeVideoDuration } from '../lib/mp4/probe'
-import { joinVideos } from '../lib/mp4/join'
+import { runJoin } from '../lib/mp4/runJoin'
 import { extractExternalGpx } from '../lib/telemetry/externalGpx'
 import { extractGoProGpmf } from '../lib/telemetry/goproGpmf'
 import type { SourceType, TelemetryPoint } from '../types'
@@ -67,7 +67,7 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
       } else {
         setPhase('joining')
         setJoinProgress(0)
-        const blob = await joinVideos(videoParts, setJoinProgress)
+        const blob = await runJoin(videoParts, setJoinProgress)
         videoFile = new File([blob], videoParts[0].name, { type: 'video/mp4' })
       }
 
