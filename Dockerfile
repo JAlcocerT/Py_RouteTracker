@@ -1,24 +1,30 @@
-FROM python:3.10
+# --- stage 1: build the React frontend ---
+FROM node:20-slim AS frontend-build
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
 
-# Copy local code to the container image.
-ENV APP_HOME /app
-WORKDIR $APP_HOME
+# --- stage 2: backend runtime ---
+# Every compute-heavy feature (trim, join, telemetry extraction, lap
+# detection, HUD rendering, compositing) now runs client-side in the
+# browser -- see frontend/src/lib/ -- so this stage has nothing left to do
+# but serve the built frontend. No ffmpeg/exiftool, no data volume: nothing
+# is ever stored server-side anymore either.
+FROM python:3.12-slim AS backend
 
-COPY . ./
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    software-properties-common \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY backend/pyproject.toml backend/uv.lock ./
+RUN uv sync --frozen --no-install-project
 
-# Install production dependencies.
-#RUN pip install -r ./Z_Deploy_me/requirements.txt
-RUN pip install -r requirements.txt
+COPY backend/app ./app
+COPY --from=frontend-build /frontend/dist ./static
 
-EXPOSE 8501
+ENV PATH="/app/.venv/bin:$PATH"
 
-#CMD python ./app/app.py
+EXPOSE 7000
 
-#ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7000"]

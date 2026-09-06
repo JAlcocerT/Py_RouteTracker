@@ -1,0 +1,16 @@
+services:
+  routetracker:
+    # Both image: and build: present: `docker compose pull` (or `up` without
+    # --build) fetches the pre-built multi-arch image CI/CD publishes;
+    # `docker compose up --build` still builds locally and tags the result
+    # with this same name, exactly as before -- your choice either way.
+    image: ghcr.io/jlleongarcia/py_routetracker:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # Bound to all host interfaces (not just 127.0.0.1), so this is
+      # reachable both from localhost and from any device on your Tailscale
+      # network via the host's Tailscale IP -- no extra network config needed.
+      - "7000:7000"
+    restart: unless-stopped

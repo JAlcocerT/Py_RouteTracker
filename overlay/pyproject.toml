@@ -1,9 +1,0 @@
-[project]
-name = "overlay"
-version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.12"
-dependencies = [
-    "gopro-overlay>=0.129.0",
-]

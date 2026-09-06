@@ -1,0 +1,135 @@
+name: CI/CD — Test & Publish Multi-Arch Image
+
+# Replaces the old CICD-GHA_MultiArch.yml / ci-cd.yml / github-runner.yml,
+# which built a since-removed Streamlit app. Those three were near-duplicates
+# of each other and never actually ran a test
+# suite before publishing; this one gates the image build on the real backend
+# and frontend checks that now exist. See README.md's "CI/CD" section.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        # astral-sh/setup-uv, unlike the other actions pinned in this file,
+        # doesn't publish a rolling major-version tag (no bare "v9") -- only
+        # exact versions. Pin and bump this by hand when needed.
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync
+
+      - name: Run backend tests
+        working-directory: backend
+        run: uv run pytest -q
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm run test
+
+      - name: Type-check and build
+        working-directory: frontend
+        run: npm run build
+
+  build-and-push:
+    needs: [test-backend, test-frontend]
+    # Only publish from an actual push/tag/manual run -- never from a pull_request
+    # (a PR, especially from a fork, shouldn't publish images, and forked PRs
+    # don't get package-write access to secrets/GITHUB_TOKEN anyway).
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          # GITHUB_TOKEN, not a manually-created PAT -- it's scoped to this
+          # repo, expires automatically, and needs no setup beyond the
+          # `packages: write` permission above (the old workflows required
+          # creating and rotating a personal access token by hand).
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR requires an all-lowercase image path; github.repository preserves
+      # the repo's actual case (e.g. "SomeUser/Py_RouteTracker"), which would
+      # otherwise make the push fail.
+      - name: Compute lowercase image name
+        id: image
+        run: echo "name=${REPO,,}" >> "$GITHUB_OUTPUT"
+        env:
+          REPO: ${{ github.repository }}
+
+      - name: Extract image metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=sha,prefix=,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
