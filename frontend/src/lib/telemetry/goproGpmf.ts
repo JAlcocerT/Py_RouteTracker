@@ -157,11 +157,17 @@ export interface GoProExtractOptions {
   onProgress?: (fraction: number) => void
 }
 
-export async function extractGoProGpmf(
+interface RawSamples {
+  gps: GpsSample[]
+  accel: AccelSample[]
+}
+
+/** Reads one file's raw GPMF streams. Returns null when the file simply has
+ * no telemetry track, which is a normal outcome rather than a failure. */
+async function readRawSamples(
   videoFile: File,
-  durationSec: number,
-  { targetFps = 30.0, onProgress }: GoProExtractOptions = {},
-): Promise<TelemetryResult> {
+  onProgress?: (fraction: number) => void,
+): Promise<RawSamples | null> {
   let extracted: Parameters<typeof goproTelemetry>[0]
   try {
     extracted = await withTimeout(
@@ -171,27 +177,35 @@ export async function extractGoProGpmf(
         progress: (p) => onProgress?.((p / 100) * 0.7),
       }),
       EXTRACTION_TIMEOUT_MS,
-      'Timed out reading the video file -- it may be corrupted or unusually large.',
+      `Timed out reading '${videoFile.name}' -- it may be corrupted or unusually large.`,
     )
   } catch (e) {
     // Plain string rejections ('Track not found' / 'File not compatible')
     // are gpmf-extract's own no-gpmd-track signal, not a real failure --
     // treat them the same as "found the track but no usable GPS samples".
-    if (e === 'Track not found' || e === 'File not compatible') return emptyResult('gopro_embedded')
+    if (e === 'Track not found' || e === 'File not compatible') return null
     throw e
   }
 
   const result = await withTimeout(
     goproTelemetry(extracted, { stream: ['GPS', 'ACCL'], progress: (p) => onProgress?.(0.7 + p * 0.3) }),
     EXTRACTION_TIMEOUT_MS,
-    'Timed out decoding GPS telemetry from the video.',
+    `Timed out decoding GPS telemetry from '${videoFile.name}'.`,
   )
   const telemetry = result as unknown as GoproTelemetryResult
+  return { gps: findGpsSamples(telemetry), accel: findAccelSamples(telemetry) }
+}
 
-  const gpsRows = gpsRowsFromSamples(findGpsSamples(telemetry))
+/** Turns raw GPMF streams into the app's telemetry rows. Kept separate from
+ * the read above so that a multi-part recording can merge every part's raw
+ * samples first and go through this once -- accel is normalized against the
+ * median magnitude of whatever it is given, so normalizing per part would
+ * scale each chapter of one session differently. */
+function buildResult(raw: RawSamples, durationSec: number, targetFps: number): TelemetryResult {
+  const gpsRows = gpsRowsFromSamples(raw.gps)
   if (gpsRows.length === 0) return emptyResult('gopro_embedded')
 
-  const accelRows = accelRowsFromSamples(findAccelSamples(telemetry))
+  const accelRows = accelRowsFromSamples(raw.accel)
   const hasAccel = accelRows.length > 0
 
   const gpsResampled = resampleToGrid(gpsRows, durationSec, targetFps, ['lat', 'lon', 'speed'])
@@ -206,6 +220,49 @@ export async function extractGoProGpmf(
     lon_g: accelResampled ? accelResampled[i].lon_g : 0.0,
   }))
 
-  onProgress?.(1)
   return { rows, sourceName: 'gopro_embedded', hasAccel }
+}
+
+export async function extractGoProGpmf(
+  videoFile: File,
+  durationSec: number,
+  { targetFps = 30.0, onProgress }: GoProExtractOptions = {},
+): Promise<TelemetryResult> {
+  const raw = await readRawSamples(videoFile, onProgress)
+  if (!raw) return emptyResult('gopro_embedded')
+  onProgress?.(1)
+  return buildResult(raw, durationSec, targetFps)
+}
+
+/**
+ * Telemetry for a joined recording, read from the original parts rather than
+ * from the joined file. The join (lib/mp4/join.ts) carries picture and sound
+ * only -- mediabunny has no model for a `gpmd` track -- so each part's own
+ * telemetry is read here and shifted onto the joined timeline by
+ * `partStarts[i]`, the second at which that part begins in the joined video.
+ *
+ * Parts without a telemetry track are skipped rather than treated as an
+ * error: a recording whose later chapters lost GPS lock is still worth
+ * overlaying for the stretch that has it.
+ */
+export async function extractGoProGpmfParts(
+  parts: File[],
+  partStarts: number[],
+  durationSec: number,
+  { targetFps = 30.0, onProgress }: GoProExtractOptions = {},
+): Promise<TelemetryResult> {
+  const merged: RawSamples = { gps: [], accel: [] }
+
+  for (const [i, part] of parts.entries()) {
+    const raw = await readRawSamples(part, (fraction) => onProgress?.((i + fraction) / parts.length))
+    if (!raw) continue
+    // gpmf-extract reports `cts` in milliseconds from the start of its own
+    // file; the joined timeline needs it from the start of the recording.
+    const shiftMs = (partStarts[i] ?? 0) * 1000
+    for (const sample of raw.gps) merged.gps.push({ ...sample, cts: sample.cts + shiftMs })
+    for (const sample of raw.accel) merged.accel.push({ ...sample, cts: sample.cts + shiftMs })
+  }
+
+  onProgress?.(1)
+  return buildResult(merged, durationSec, targetFps)
 }

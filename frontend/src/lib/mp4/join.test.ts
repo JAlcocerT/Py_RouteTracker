@@ -1,182 +1,246 @@
-/** Fixtures are authored with mp4box.js itself. The one thing it cannot
- * author is a `gpmd` track -- GoPro's telemetry fourcc isn't in its sample
- * entry registry at all, which is exactly why this module has to copy the
- * source's sample entry verbatim rather than let mp4box.js rebuild one. So
- * the metadata track is authored as `mp4s` (same box shape, registered) and
- * its fourcc patched to `gpmd` in the raw bytes, giving a parseable
- * stand-in for the real thing. */
+/**
+ * Fixtures are progressive mp4s built with mediabunny: a single `mdat` with
+ * the `moov` *after* it, which is how a camera writes a recording (it can't
+ * know the sample tables until it stops). Packet payloads are filled with a
+ * recognisable byte per frame so the join can be checked for actually being
+ * lossless rather than merely producing a file.
+ */
 import { describe, expect, it, vi } from 'vitest'
-// Node's File, not jsdom's: `demuxFile` reads the part via `File.stream()`,
-// which every browser implements and jsdom does not.
-import { File as NodeFile } from 'node:buffer'
-import { createFile, type Movie } from 'mp4box'
-import { IncompatiblePartsError, joinVideos } from './join'
+import {
+  ALL_FORMATS, BlobSource, BufferTarget, EncodedAudioPacketSource, EncodedPacket, EncodedPacketSink,
+  EncodedVideoPacketSource, Input, Mp4OutputFormat, Output, type StreamTargetChunk,
+} from 'mediabunny'
+import { IncompatiblePartsError, type JoinVideosOptions, joinVideos } from './join'
 
-const SAMPLES_PER_TRACK = 30
-const SAMPLE_DURATION = 100
-// Big enough that a part spans several `File.stream()` chunks, so the demux
-// (and the progress it reports, and the sample-release it does between
-// chunks) is exercised incrementally rather than in a single append.
-const SAMPLE_BYTES = 4096
+const FRAMES = 120
+const FPS = 30
+const VIDEO_BYTES = 4096
+const AUDIO_BYTES = 256
+/** Minimal but valid AVCDecoderConfigurationRecord. */
+const AVCC = new Uint8Array([1, 66, 0, 10, 255, 225, 0, 3, 103, 66, 0, 1, 0, 3, 104, 206, 1, 0])
+/** AudioSpecificConfig: AAC-LC, 48 kHz, stereo. */
+const ASC = new Uint8Array([0x11, 0x90])
 
-/** A GoPro-shaped part: HEVC video + AAC audio + a `gpmd` telemetry track. */
-function buildPart(name: string, { videoFourcc = 'hvc1' }: { videoFourcc?: 'hvc1' | 'avc1' } = {}): File {
-  const file = createFile()
-  const tracks = [
-    { type: videoFourcc, hdlr: 'vide', timescale: 1000, width: 64, height: 64 },
-    { type: 'mp4a', hdlr: 'soun', timescale: 1000, samplerate: 48000, channel_count: 2, samplesize: 16 },
-    { type: 'mp4s', hdlr: 'meta', timescale: 1000 },
-  ] as const
+interface PartOptions {
+  frames?: number
+  withAudio?: boolean
+  width?: number
+  /** Byte written into every packet of this part, so payloads are traceable
+   * back to the part they came from. */
+  fill?: number
+}
 
-  for (const options of tracks) {
-    const id = file.addTrack(options)
-    for (let i = 0; i < SAMPLES_PER_TRACK; i++) {
-      file.addSample(id, new Uint8Array(SAMPLE_BYTES).fill(i), {
-        duration: SAMPLE_DURATION,
-        cts: i * SAMPLE_DURATION,
-        dts: i * SAMPLE_DURATION,
-        is_sync: i === 0,
-      })
+async function buildPart(name: string, options: PartOptions = {}): Promise<File> {
+  const { frames = FRAMES, withAudio = true, width = 1920, fill } = options
+  const output = new Output({ format: new Mp4OutputFormat({ fastStart: false }), target: new BufferTarget() })
+  const video = new EncodedVideoPacketSource('avc')
+  const audio = new EncodedAudioPacketSource('aac')
+  output.addVideoTrack(video, { rotation: 180 })
+  if (withAudio) output.addAudioTrack(audio)
+  await output.start()
+
+  for (let i = 0; i < frames; i++) {
+    const byte = fill ?? i % 251
+    await video.add(
+      new EncodedPacket(new Uint8Array(VIDEO_BYTES).fill(byte), i % 30 === 0 ? 'key' : 'delta', i / FPS, 1 / FPS),
+      i === 0
+        ? { decoderConfig: { codec: 'avc1.42000a', codedWidth: width, codedHeight: 1080, description: AVCC } }
+        : undefined,
+    )
+    if (withAudio) {
+      await audio.add(
+        new EncodedPacket(new Uint8Array(AUDIO_BYTES).fill(byte), 'key', i / FPS, 1 / FPS),
+        i === 0
+          ? { decoderConfig: { codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: 48000, description: ASC } }
+          : undefined,
+      )
     }
   }
-
-  const bytes = new Uint8Array(file.getBuffer().buffer)
-  patchFourcc(bytes, 'mp4s', 'gpmd')
-  return new NodeFile([bytes], name, { type: 'video/mp4' }) as unknown as File
+  await output.finalize()
+  return new File([new Uint8Array(output.target.buffer!)], name, { type: 'video/mp4' })
 }
 
-/** Rewrites a fourcc wherever it appears in the raw bytes. Safe only because
- * the fourcc it is called with (`mp4s`) occurs exactly once in the authored
- * fixture -- as that track's sample entry type. */
-function patchFourcc(bytes: Uint8Array, from: string, to: string): void {
-  const [needle, replacement] = [from, to].map((s) => [...s].map((c) => c.charCodeAt(0)))
-  for (let i = 0; i <= bytes.length - 4; i++) {
-    if (needle.every((byte, k) => bytes[i + k] === byte)) bytes.set(replacement, i)
-  }
-}
-
-interface ParsedTrack {
-  codec: string
-  handler: string
-  nbSamples: number
-  cts: number[]
-  /** Each sample's payload reduced to (size, first byte) -- buildPart fills
-   * sample *i* with the byte *i*, so this is enough to prove the bytes came
-   * through intact and in order. */
+interface ReadTrack {
+  type: string
+  codec: string | null
+  rotation: number | null
+  timestamps: number[]
+  /** (byteLength, first byte) per packet -- enough to prove the payloads came
+   * through untouched and in order. */
   payloads: Array<[number, number]>
 }
 
-async function parse(blob: Blob): Promise<{ duration: number; timescale: number; tracks: ParsedTrack[] }> {
-  const file = createFile()
-  let movie: Movie | undefined
-  const cts = new Map<number, number[]>()
-  const payloads = new Map<number, Array<[number, number]>>()
-  file.onReady = (info) => {
-    movie = info
-    for (const track of info.tracks) {
-      cts.set(track.id, [])
-      payloads.set(track.id, [])
-      file.setExtractionOptions(track.id, undefined, { nbSamples: track.nb_samples })
+async function read(blob: Blob): Promise<{ duration: number | null; tracks: ReadTrack[] }> {
+  const input = new Input({ source: new BlobSource(blob), formats: ALL_FORMATS })
+  const tracks: ReadTrack[] = []
+  for (const track of await input.getTracks()) {
+    const timestamps: number[] = []
+    const payloads: Array<[number, number]> = []
+    for await (const packet of new EncodedPacketSink(track).packets()) {
+      timestamps.push(packet.timestamp)
+      payloads.push([packet.data.length, packet.data[0]])
     }
-    file.start()
-  }
-  file.onSamples = (id, _user, samples) => {
-    cts.get(id)?.push(...samples.map((s) => s.cts))
-    payloads.get(id)?.push(...samples.map((s): [number, number] => [s.size, s.data![0]]))
-  }
-
-  const buffer = await blob.arrayBuffer()
-  Object.assign(buffer, { fileStart: 0 })
-  file.appendBuffer(buffer as ArrayBuffer & { fileStart: number })
-  file.flush()
-
-  if (!movie) throw new Error('joined output did not parse')
-  return {
-    duration: movie.duration,
-    timescale: movie.timescale,
-    tracks: movie.tracks.map((track) => ({
+    tracks.push({
+      type: track.type,
       codec: track.codec,
-      handler: file.getTrackById(track.id).mdia.hdlr.handler,
-      nbSamples: track.nb_samples,
-      cts: cts.get(track.id) ?? [],
-      payloads: payloads.get(track.id) ?? [],
-    })),
+      rotation: track.isVideoTrack() ? track.rotation : null,
+      timestamps,
+      payloads,
+    })
   }
+  return { duration: await input.getDurationFromMetadata(), tracks }
+}
+
+/** joinVideos on its buffered path, with the now-nullable blob narrowed. */
+async function joinToBlob(parts: File[], options: JoinVideosOptions = {}) {
+  const { blob, partStarts } = await joinVideos(parts, options)
+  if (!blob) throw new Error('expected a buffered join to return a blob')
+  return { blob, partStarts }
+}
+
+/** Stands in for a FileSystemWritableFileStream: honours the positioned
+ * writes mediabunny's StreamTarget issues and reassembles the file. */
+function collectingStream() {
+  const writes: { data: Uint8Array; position: number }[] = []
+  let size = 0
+  const stream = new WritableStream<StreamTargetChunk>({
+    write(chunk) {
+      writes.push({ data: new Uint8Array(chunk.data), position: chunk.position })
+      size = Math.max(size, chunk.position + chunk.data.byteLength)
+    },
+  })
+  const assembled = () => {
+    const out = new Uint8Array(size)
+    for (const write of writes) out.set(write.data, write.position)
+    return out
+  }
+  return { stream, assembled, writeCount: () => writes.length }
 }
 
 describe('joinVideos', () => {
-  it('concatenates every track and leaves timestamps contiguous', async () => {
-    const joined = await parse(await joinVideos([buildPart('GH010001.MP4'), buildPart('GH020001.MP4')]))
+  it('passes every packet through byte for byte, in order', async () => {
+    const parts = [await buildPart('GH010433.MP4', { fill: 7 }), await buildPart('GH020433.MP4', { fill: 9 })]
+    const { blob } = await joinToBlob(parts)
+    const joined = await read(blob)
 
-    expect(joined.tracks).toHaveLength(3)
+    expect(joined.tracks.map((t) => `${t.type}/${t.codec}`)).toEqual(['video/avc', 'audio/aac'])
     for (const track of joined.tracks) {
-      expect(track.nbSamples).toBe(SAMPLES_PER_TRACK * 2)
-      // The second part picks up exactly where the first left off -- no gap,
-      // no overlap, no reset to zero.
-      expect(track.cts).toEqual(
-        Array.from({ length: SAMPLES_PER_TRACK * 2 }, (_, i) => i * SAMPLE_DURATION),
-      )
-      // ...and every sample's bytes survived the copy, in order. This is
-      // what a "lossless" join has to mean, and it is also what would break
-      // if the demuxer released mp4box.js's sample store too eagerly.
-      expect(track.payloads).toEqual(
-        Array.from({ length: SAMPLES_PER_TRACK * 2 }, (_, i) => [SAMPLE_BYTES, i % SAMPLES_PER_TRACK]),
+      const size = track.type === 'video' ? VIDEO_BYTES : AUDIO_BYTES
+      expect(track.payloads).toEqual([
+        ...Array.from({ length: FRAMES }, (): [number, number] => [size, 7]),
+        ...Array.from({ length: FRAMES }, (): [number, number] => [size, 9]),
+      ])
+    }
+  }, 30000)
+
+  it('lays the second part end to end after the first', async () => {
+    const parts = [await buildPart('GH010433.MP4'), await buildPart('GH020433.MP4')]
+    const { blob, partStarts } = await joinToBlob(parts)
+    const joined = await read(blob)
+
+    expect(partStarts).toEqual([0, FRAMES / FPS])
+    expect(joined.duration).toBeCloseTo((FRAMES * 2) / FPS, 3)
+    for (const track of joined.tracks) {
+      expect(track.timestamps).toEqual(
+        Array.from({ length: FRAMES * 2 }, (_, i) => expect.closeTo(i / FPS, 4) as unknown as number),
       )
     }
-  })
+  }, 30000)
 
-  it("preserves each track's own codec and handler", async () => {
-    // The regression this guards: mp4box.js's `addTrack` builds its sample
-    // entry from `options.type`, defaulting to `avc1`. Omitting the option
-    // and passing the source entry as `description` nested it inside a fresh
-    // `avc1` entry instead of using it, so every track in the joined file --
-    // HEVC video, AAC audio, and the gpmd telemetry track alike -- came out
-    // as an `avc1` video track.
-    const joined = await parse(await joinVideos([buildPart('GH010001.MP4'), buildPart('GH020001.MP4')]))
+  it('keeps audio and video aligned when parts are of unequal length', async () => {
+    const parts = [
+      await buildPart('GH010433.MP4', { frames: 90 }),
+      await buildPart('GH020433.MP4', { frames: 40 }),
+      await buildPart('GH030433.MP4', { frames: 65 }),
+    ]
+    const { blob, partStarts } = await joinToBlob(parts)
+    const joined = await read(blob)
 
-    expect(joined.tracks.map((t) => t.codec)).toEqual(['hvc1', 'mp4a', 'gpmd'])
-    expect(joined.tracks.map((t) => t.handler)).toEqual(['vide', 'soun', 'meta'])
-  })
+    expect(partStarts[0]).toBe(0)
+    expect(partStarts[1]).toBeCloseTo(90 / FPS, 6)
+    expect(partStarts[2]).toBeCloseTo(130 / FPS, 6)
+    // Both tracks carry every packet and start each part at the same instant,
+    // which is what stops the sound drifting away from the picture at a seam.
+    for (const track of joined.tracks) expect(track.timestamps).toHaveLength(195)
+    expect(joined.tracks[0].timestamps).toEqual(joined.tracks[1].timestamps)
+  }, 30000)
 
-  it('states a duration in the output header', async () => {
-    // mp4box.js's authoring API leaves mvhd/tkhd/mdhd duration at zero,
-    // which makes the joined file look zero-length to anything reading the
-    // header and pushes probeVideoDuration onto its walk-every-packet path.
-    const joined = await parse(await joinVideos([buildPart('GH010001.MP4'), buildPart('GH020001.MP4')]))
-
-    const expectedSeconds = (SAMPLES_PER_TRACK * 2 * SAMPLE_DURATION) / 1000
-    expect(joined.duration / joined.timescale).toBeCloseTo(expectedSeconds, 3)
-  })
+  it('preserves track rotation', async () => {
+    const { blob } = await joinToBlob([await buildPart('a.MP4'), await buildPart('b.MP4')])
+    expect((await read(blob)).tracks[0].rotation).toBe(180)
+  }, 30000)
 
   it('reports progress as it goes, not only on completion', async () => {
     const seen: number[] = []
-    await joinVideos([buildPart('GH010001.MP4'), buildPart('GH020001.MP4')], (f) => seen.push(f))
+    await joinVideos([await buildPart('a.MP4'), await buildPart('b.MP4')], { onProgress: (f) => seen.push(f) })
 
-    // The bug users saw: `joinVideos` accepted an onProgress callback but
-    // never handed it to the demuxer, so the bar sat at 0% for the entire
-    // join and then jumped straight to 100%.
     expect(seen.length).toBeGreaterThan(1)
     expect(seen[0]).toBeGreaterThan(0)
     expect(seen[0]).toBeLessThan(1)
     expect(seen).toEqual([...seen].sort((a, b) => a - b))
     expect(seen.at(-1)).toBe(1)
-  })
+  }, 30000)
 
   it('does not trigger a file download as a side effect', async () => {
-    // mp4box.js's `ISOFile.save()` returns the Blob *and* clicks an
-    // <a download> for it, which popped an unasked-for 'joined.mp4' save.
     const createObjectURL = vi.spyOn(URL, 'createObjectURL')
-    await joinVideos([buildPart('GH010001.MP4'), buildPart('GH020001.MP4')])
+    await joinVideos([await buildPart('a.MP4'), await buildPart('b.MP4')])
     expect(createObjectURL).not.toHaveBeenCalled()
     createObjectURL.mockRestore()
-  })
+  }, 30000)
+
+  it('streams the joined file out rather than buffering it when given an outputStream', async () => {
+    const parts = [await buildPart('GH010433.MP4', { fill: 7 }), await buildPart('GH020433.MP4', { fill: 9 })]
+    const sink = collectingStream()
+
+    const { blob, partStarts } = await joinVideos(parts, { outputStream: sink.stream })
+
+    // Nothing came back in memory: this is the whole point -- a real joined
+    // recording is bigger than the 4 GiB an ArrayBuffer can hold.
+    expect(blob).toBeNull()
+    expect(partStarts).toEqual([0, FRAMES / FPS])
+
+    // What landed in the stream is a complete, readable mp4 carrying exactly
+    // the payloads the buffered path produces. The destination changed; the
+    // bytes did not.
+    const streamed = await read(new Blob([sink.assembled()], { type: 'video/mp4' }))
+    expect(streamed.duration).toBeCloseTo((FRAMES * 2) / FPS, 3)
+    for (const track of streamed.tracks) {
+      const size = track.type === 'video' ? VIDEO_BYTES : AUDIO_BYTES
+      expect(track.payloads).toEqual([
+        ...Array.from({ length: FRAMES }, (): [number, number] => [size, 7]),
+        ...Array.from({ length: FRAMES }, (): [number, number] => [size, 9]),
+      ])
+    }
+  }, 30000)
+
+  it('batches stream writes rather than issuing one per packet', async () => {
+    const parts = [await buildPart('GH010433.MP4'), await buildPart('GH020433.MP4')]
+    const sink = collectingStream()
+
+    await joinVideos(parts, { outputStream: sink.stream })
+
+    // 480 packets go in; chunking means far fewer writes come out, which is
+    // what keeps a join from thrashing the filesystem.
+    expect(sink.writeCount()).toBeLessThan(FRAMES)
+  }, 30000)
 
   it('rejects parts whose track layouts differ', async () => {
-    const parts = [buildPart('GH010001.MP4'), buildPart('other.MP4', { videoFourcc: 'avc1' })]
+    const parts = [await buildPart('GH010433.MP4'), await buildPart('other.MP4', { withAudio: false })]
     await expect(joinVideos(parts)).rejects.toThrow(IncompatiblePartsError)
-  })
+  }, 30000)
+
+  it('rejects parts whose resolutions differ', async () => {
+    const parts = [await buildPart('GH010433.MP4'), await buildPart('other.MP4', { width: 1280 })]
+    await expect(joinVideos(parts)).rejects.toThrow(IncompatiblePartsError)
+  }, 30000)
 
   it('rejects a single part', async () => {
-    await expect(joinVideos([buildPart('GH010001.MP4')])).rejects.toThrow(IncompatiblePartsError)
-  })
+    await expect(joinVideos([await buildPart('GH010433.MP4')])).rejects.toThrow(IncompatiblePartsError)
+  }, 30000)
+
+  it('rejects a part with no readable media', async () => {
+    const full = await buildPart('GH010433.MP4')
+    const truncated = new File([await full.slice(0, 2048).arrayBuffer()], 'truncated.MP4', { type: 'video/mp4' })
+    await expect(joinVideos([truncated, full])).rejects.toThrow(/truncated.MP4/)
+  }, 30000)
 })

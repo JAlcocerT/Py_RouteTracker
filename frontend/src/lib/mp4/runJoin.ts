@@ -1,9 +1,9 @@
 /** Main-thread facade for joinWorker.ts -- spawns the worker, ships it the
  * parts, and adapts its postMessage protocol back to a normal Promise +
  * progress-callback shape, mirroring render/runRender.ts. */
-import type { JoinWorkerRequest, JoinWorkerResponse } from '../../workers/joinWorker'
+import type { JoinedRecording, JoinWorkerRequest, JoinWorkerResponse } from '../../workers/joinWorker'
 
-export function runJoin(parts: File[], onProgress?: (fraction: number) => void): Promise<Blob> {
+export function runJoin(parts: File[], onProgress?: (fraction: number) => void): Promise<JoinedRecording> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('../../workers/joinWorker.ts', import.meta.url), { type: 'module' })
 
@@ -13,7 +13,7 @@ export function runJoin(parts: File[], onProgress?: (fraction: number) => void):
         onProgress?.(message.progress)
       } else if (message.type === 'done') {
         worker.terminate()
-        resolve(message.blob)
+        resolve(message.joined)
       } else {
         worker.terminate()
         reject(new Error(message.message))

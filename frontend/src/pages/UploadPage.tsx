@@ -6,7 +6,7 @@ import { describeCodecCompatIssue } from '../lib/env'
 import { probeVideoDuration } from '../lib/mp4/probe'
 import { runJoin } from '../lib/mp4/runJoin'
 import { extractExternalGpx } from '../lib/telemetry/externalGpx'
-import { extractGoProGpmf } from '../lib/telemetry/goproGpmf'
+import { extractGoProGpmf, extractGoProGpmfParts } from '../lib/telemetry/goproGpmf'
 import type { SourceType, TelemetryPoint } from '../types'
 import { autoSortGoProParts } from '../utils/videoParts'
 
@@ -60,6 +60,10 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
     setError(null)
     try {
       let videoFile: File
+      // Set for a joined recording: where each part starts in the joined
+      // timeline. The joined file carries no telemetry track (see
+      // lib/mp4/join.ts), so the GPMF read below goes back to the parts.
+      let partStarts: number[] | null = null
 
       if (mode === 'single') {
         if (!video) return
@@ -67,8 +71,9 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
       } else {
         setPhase('joining')
         setJoinProgress(0)
-        const blob = await runJoin(videoParts, setJoinProgress)
-        videoFile = new File([blob], videoParts[0].name, { type: 'video/mp4' })
+        const joined = await runJoin(videoParts, setJoinProgress)
+        videoFile = joined.file
+        partStarts = joined.partStarts
       }
 
       setPhase('extracting')
@@ -77,7 +82,9 @@ export function UploadPage({ onUploaded }: UploadPageProps) {
 
       const result =
         sourceType === 'gopro_embedded'
-          ? await extractGoProGpmf(videoFile, duration, { onProgress: setExtractProgress })
+          ? partStarts
+            ? await extractGoProGpmfParts(videoParts, partStarts, duration, { onProgress: setExtractProgress })
+            : await extractGoProGpmf(videoFile, duration, { onProgress: setExtractProgress })
           : extractExternalGpx(await gpx!.text(), duration, {
               videoStartTime: videoStartTime ? new Date(videoStartTime) : undefined,
             })

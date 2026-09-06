@@ -77,3 +77,63 @@ describe('extractGoProGpmf', () => {
     expect(result.hasAccel).toBe(false)
   })
 })
+
+describe('extractGoProGpmfParts', () => {
+  /** Each part's GPMF is timestamped from the start of *its own* file, so a
+   * part's samples all restart at cts 0 -- shifting them onto the joined
+   * timeline is the whole job here. */
+  const partSamples = (lat: number) => [
+    { cts: 0, value: [lat, 19.0, 200, 10.0, 10.1] },
+    { cts: 500, value: [lat + 0.0001, 19.0001, 200, 12.0, 12.1] },
+    { cts: 1000, value: [lat + 0.0002, 19.0002, 200, 14.0, 14.1] },
+  ]
+
+  async function loadWithParts(perPart: Array<{ samples?: unknown[]; missing?: boolean }>) {
+    vi.resetModules()
+    let call = 0
+    vi.doMock('gpmf-extract', () => ({
+      default: vi.fn(async () => {
+        const part = perPart[call++]
+        if (part.missing) return Promise.reject('Track not found')
+        return { rawData: new Uint8Array(), timing: {} }
+      }),
+    }))
+    let decode = 0
+    vi.doMock('gopro-telemetry', () => ({
+      default: vi.fn(async () => {
+        const part = perPart.filter((p) => !p.missing)[decode++]
+        return { 1: { streams: { GPS5: { samples: part.samples } } } }
+      }),
+    }))
+    return (await import('./goproGpmf')).extractGoProGpmfParts
+  }
+
+  it('shifts each part onto the joined timeline', async () => {
+    const extract = await loadWithParts([{ samples: partSamples(50) }, { samples: partSamples(60) }])
+    // Part 2 begins 2s into the joined video, so its cts-0 sample belongs at
+    // t=2 -- not back at t=0 on top of part 1's.
+    const result = await extract([{} as File, {} as File], [0, 2], 4.0, { targetFps: 1.0 })
+
+    expect(result.rows.map((r) => r.time)).toEqual([0, 1, 2, 3])
+    expect(result.rows[0].lat).toBeCloseTo(50, 3)
+    expect(result.rows[2].lat).toBeCloseTo(60, 3)
+  })
+
+  it('skips parts with no telemetry track rather than failing the whole read', async () => {
+    const extract = await loadWithParts([{ samples: partSamples(50) }, { missing: true }])
+    const result = await extract([{} as File, {} as File], [0, 2], 4.0, { targetFps: 1.0 })
+
+    expect(result.rows.length).toBeGreaterThan(0)
+    expect(result.rows[0].lat).toBeCloseTo(50, 3)
+  })
+
+  it('reports progress across all parts and finishes at 1', async () => {
+    const extract = await loadWithParts([{ samples: partSamples(50) }, { samples: partSamples(60) }])
+    const progress: number[] = []
+    await extract([{} as File, {} as File], [0, 2], 4.0, { targetFps: 1.0, onProgress: (p) => progress.push(p) })
+
+    expect(progress).toEqual([...progress].sort((a, b) => a - b))
+    expect(progress.at(-1)).toBe(1)
+    expect(Math.max(...progress)).toBeLessThanOrEqual(1)
+  })
+})
